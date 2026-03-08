@@ -1,8 +1,8 @@
-# DiffPlayerQC
+# WPP Production Media Diferencial Player
 
 Frame-accurate differential video QC player
 
-DiffPlayerQC es un reproductor avanzado multiplataforma (Windows, macOS, Linux) desarrollado en Rust para la comparación diferencial de video y control de calidad (QC) con precisión por cuadro. Utiliza FFmpeg para decodificación, WGPU para renderizado acelerado por hardware y eframe/egui para una interfaz de usuario moderna y responsiva.
+WPP Production Media Diferencial Player es un reproductor avanzado multiplataforma (Windows, macOS, Linux) desarrollado en Rust para la comparación diferencial de video y control de calidad (QC) con precisión por cuadro. Utiliza FFmpeg para decodificación, WGPU para renderizado acelerado por hardware y eframe/egui para una interfaz de usuario moderna y responsiva.
 
 ## Características
 

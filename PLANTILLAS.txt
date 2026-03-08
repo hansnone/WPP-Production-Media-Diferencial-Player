@@ -1,0 +1,95 @@
+================================================================================
+                    PLANTILLAS PARA REPORTES EN diffplayerqc
+================================================================================
+
+
+================================================================================
+                            PLANTILLA: FEATURE REQUEST
+================================================================================
+
+Título: [Descripción breve de la funcionalidad deseada]
+
+---
+
+## Descripción
+[Explica qué funcionalidad te gustaría que se agregara y por qué la necesitas]
+
+## Beneficio
+[Describe cómo esta funcionalidad mejoraría la experiencia o utilidad del proyecto]
+
+## Contexto
+[Proporciona ejemplos de casos de uso o contexto adicional si es relevante]
+
+## Posible Solución (Opcional)
+[Si tienes ideas sobre cómo podría implementarse, compártelas aquí]
+
+## Alternativas Consideradas (Opcional)
+[Si hay otras formas de resolver el problema, menciónalas]
+
+## Información Adicional
+Plataforma: [Windows/Linux/macOS]
+Versión: [Si aplica]
+Otros detalles: [Cualquier información adicional relevante]
+
+
+================================================================================
+                            PLANTILLA: ISSUE (BUG REPORT)
+================================================================================
+
+Título: [Descripción breve del problema]
+
+---
+
+## Descripción del Bug
+[Describe el problema que encontraste de forma clara y concisa]
+
+## Pasos para Reproducir
+1. [Primer paso]
+2. [Segundo paso]
+3. [Continúa...]
+
+## Comportamiento Esperado
+[Describe qué debería pasar]
+
+## Comportamiento Actual
+[Describe qué sucede en cambio]
+
+## Screenshots/Logs (Opcional)
+[Adjunta capturas de pantalla, errores de consola o logs relevantes si es posible]
+
+## Información del Entorno
+- SO: [Windows/Linux/macOS y versión]
+- Versión del Proyecto: [Versión o rama]
+- Hardware Relevante: [GPU, CPU u otro hardware relevante si aplica]
+- Dependencias: [Versiones de dependencias relevantes si aplica]
+
+## Contexto Adicional
+[Información adicional que pueda ser útil para entender el problema]
+
+## Archivos Afectados (Opcional)
+[Archivos o módulos que crees que están relacionados con el problema]
+
+
+================================================================================
+                        NOTAS PARA AMBAS PLANTILLAS
+================================================================================
+
+✓ ANTES DE ENVIAR:
+  • Verifica que no haya un issue o feature request similar ya reportado
+  • Sé específico y detallado
+  • Proporciona contexto suficiente
+  • Usa títulos descriptivos y claros
+  • Revisa la ortografía y gramática
+
+✓ INFORMACIÓN ÚTIL:
+  • Incluye versiones exactas cuando sea relevante
+  • Adjunta logs, screenshots o ejemplos de código si es posible
+  • Describe ambiente: SO, versión, hardware especial
+  • Indica si el problema es reproducible consistentemente
+
+✓ MANTENIMIENTO:
+  • Los reportes incompletos pueden ser cerrados sin explicación
+  • Se espera que los reportadores participen en la resolución del problema
+  • Proporciona feedback si se sugiere una solución
+
+================================================================================
