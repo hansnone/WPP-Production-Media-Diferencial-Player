@@ -1,0 +1,891 @@
+// app.rs — Main eframe application
+
+use crossbeam_channel::{Receiver, Sender};
+use parking_lot::Mutex;
+use std::sync::Arc;
+
+use crate::decoder;
+use crate::renderer::{RenderCallback, ShaderUniforms, VideoRenderer};
+use crate::types::{
+    Channel, ColorMetadata, CompareMode, DiffMode, DecoderCommand, PlaybackState, VideoFrame, AudioFrame, Language,
+};
+use rodio::{OutputStream, OutputStreamHandle, Sink};
+use std::path::PathBuf;
+
+// ---------------------------------------------------------------------------
+//  View state — zoom / pan / mode / sliders
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone)]
+pub struct ViewState {
+    pub mode: CompareMode,
+    pub diff_mode: DiffMode,
+    pub lang: Language,
+    pub theme: crate::types::Theme,
+    pub show_hud: bool,
+    pub split_pos: f32,
+    pub screenshot_dir: Option<PathBuf>,
+    pub amplifier: f32,
+    pub zoom: f32,
+    pub pan_u: f32,
+    pub pan_v: f32,
+    pub canvas_bg_color: [f32; 3],
+    pub show_clean_feed_window: bool,
+    /// Canvas rect in egui screen-space (for coordinate transform)
+    pub canvas_rect: egui::Rect,
+    pub mute_a: bool,
+    pub mute_b: bool,
+    pub vol_a: f32,
+    pub vol_b: f32,
+}
+
+impl Default for ViewState {
+    fn default() -> Self {
+        let desk_dir = directories::UserDirs::new().and_then(|d| d.desktop_dir().map(|p| p.to_path_buf()));
+        Self {
+            mode: CompareMode::SplitScreen,
+            diff_mode: DiffMode::AbsLinear,
+            lang: Language::Es,
+            theme: crate::types::Theme::Dark,
+            show_hud: true,
+            split_pos: 0.5,
+            screenshot_dir: desk_dir,
+            amplifier: 5.0,
+            zoom: 1.0,
+            pan_u: 0.0,
+            pan_v: 0.0,
+            canvas_bg_color: [0.0, 0.0, 0.0],
+            show_clean_feed_window: false,
+            canvas_rect: egui::Rect::NOTHING,
+            mute_a: true,
+            mute_b: true,
+            vol_a: 1.0,
+            vol_b: 1.0,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  Per-channel decoder handle
+// ---------------------------------------------------------------------------
+
+struct DecoderHandle {
+    cmd_tx: Sender<DecoderCommand>,
+    frame_rx: Receiver<VideoFrame>,
+    audio_rx: Receiver<AudioFrame>,
+    last_frame: Option<VideoFrame>,
+    next_frame: Option<VideoFrame>,
+    meta: ColorMetadata,
+    path: String,
+}
+
+// ---------------------------------------------------------------------------
+//  Main application struct
+// ---------------------------------------------------------------------------
+
+pub struct DiffPlayerApp {
+    decoder_a: Option<DecoderHandle>,
+    decoder_b: Option<DecoderHandle>,
+
+    view: ViewState,
+    playback: PlaybackState,
+
+    /// Shared with egui_wgpu::Callback
+    renderer: Arc<Mutex<VideoRenderer>>,
+
+    drag_start: Option<(egui::Pos2, f32, f32)>, // pos, pan_u, pan_v at drag start
+    dragging_split: bool,
+
+    _audio_stream: Option<OutputStream>,
+    _audio_handle: Option<OutputStreamHandle>,
+    sink_a: Option<Sink>,
+    sink_b: Option<Sink>,
+}
+
+impl DiffPlayerApp {
+    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        // --- Load Arial font if available on this OS -----------------------
+        setup_fonts(&cc.egui_ctx);
+
+        // --- Create the wgpu VideoRenderer ---------------------------------
+        let render_state = cc
+            .wgpu_render_state
+            .as_ref()
+            .expect("eframe must be running with Wgpu backend");
+
+        let target_format = render_state.target_format;
+        let renderer = Arc::new(Mutex::new(VideoRenderer::new(
+            &render_state.device,
+            target_format,
+        )));
+
+        let (audio_stream, audio_handle) = match OutputStream::try_default() {
+            Ok((s, h)) => (Some(s), Some(h)),
+            Err(_) => (None, None),
+        };
+        let sink_a = audio_handle.as_ref().and_then(|h| Sink::try_new(h).ok());
+        let sink_b = audio_handle.as_ref().and_then(|h| Sink::try_new(h).ok());
+        if let Some(s) = &sink_a { s.set_volume(0.0); }
+        if let Some(s) = &sink_b { s.set_volume(0.0); }
+
+        Self {
+            decoder_a: None,
+            decoder_b: None,
+            view: ViewState::default(),
+            playback: PlaybackState::default(),
+            renderer,
+            drag_start: None,
+            dragging_split: false,
+            _audio_stream: audio_stream,
+            _audio_handle: audio_handle,
+            sink_a,
+            sink_b,
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    //  Open a video file for one channel
+    // -----------------------------------------------------------------------
+    fn open_video(&mut self, chan: Channel) {
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("Video", &["mp4", "mov", "mxf", "mkv", "avi", "prores", "mts", "mpg", "mpeg", "ts"])
+            .add_filter("All files", &["*"])
+            .pick_file()
+        else {
+            return;
+        };
+
+        let path_str = path.to_string_lossy().to_string();
+
+        match decoder::spawn_decoder(&path_str) {
+            Ok((cmd_tx, frame_rx, audio_rx, meta)) => {
+                let handle = DecoderHandle {
+                    cmd_tx,
+                    frame_rx,
+                    audio_rx,
+                    last_frame: None,
+                    next_frame: None,
+                    meta,
+                    path: path_str,
+                };
+
+                match chan {
+                    Channel::A => {
+                        // Stop old decoder if any
+                        if let Some(old) = &self.decoder_a {
+                            let _ = old.cmd_tx.send(DecoderCommand::Stop);
+                        }
+                        self.playback.duration_a = handle.meta.duration_secs;
+                        self.decoder_a = Some(handle);
+                        self.do_seek(0.0);
+                    }
+                    Channel::B => {
+                        if let Some(old) = &self.decoder_b {
+                            let _ = old.cmd_tx.send(DecoderCommand::Stop);
+                        }
+                        self.playback.duration_b = handle.meta.duration_secs;
+                        self.decoder_b = Some(handle);
+                        self.do_seek(0.0);
+                    }
+                }
+            }
+            Err(e) => {
+                log::error!("Failed to open video: {e}");
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    //  Drain frame channels and upload new frames to GPU
+    // -----------------------------------------------------------------------
+    fn drain_frames(&mut self, render_state: &egui_wgpu::RenderState) -> bool {
+        let device = &render_state.device;
+        let queue  = &render_state.queue;
+
+        let mut current_pts = self.playback.current_pts;
+        let is_playing = self.playback.is_playing;
+        let mut repainted = false;
+
+        // Process frames for one decoder
+        let mut process_dec = |dec: &mut DecoderHandle, is_a: bool| {
+            if dec.next_frame.is_none() {
+                dec.next_frame = dec.frame_rx.try_recv().ok();
+            }
+
+            while let Some(frame) = dec.next_frame.take() {
+                // Determine if we should show this specific frame
+                let time_to_show = if is_playing {
+                    // When playing: show if frame is in the past or exactly now
+                    frame.pts <= current_pts || (frame.pts - current_pts).abs() < 0.005
+                } else {
+                    // When paused: only show if it's a very close match to where we are (seek result)
+                    (frame.pts - current_pts).abs() < 0.04
+                };
+
+                if time_to_show {
+                    let (w, h) = (frame.width, frame.height);
+                    let data = frame.rgba_data.clone();
+                    {
+                        let mut rend = self.renderer.lock();
+                        if is_a {
+                            rend.update_texture_a(device, queue, &data, w, h);
+                        } else {
+                            rend.update_texture_b(device, queue, &data, w, h);
+                        }
+                    }
+                    dec.last_frame = Some(frame.clone());
+                    dec.next_frame = dec.frame_rx.try_recv().ok();
+                    repainted = true;
+                    
+                    if !is_playing {
+                        if is_a { current_pts = frame.pts; }
+                        break;
+                    }
+                } else {
+                    // If this frame is NOT to be shown...
+                    if frame.pts < current_pts {
+                        // It's a stale frame (e.g. from before a seek that didn't clear the channel)
+                        // Discard it and try to find a better one in the channel.
+                        dec.next_frame = dec.frame_rx.try_recv().ok();
+                        continue;
+                    } else {
+                        // It's a future frame. Keep it in next_frame and stop draining.
+                        dec.next_frame = Some(frame);
+                        break;
+                    }
+                }
+            }
+        };
+
+        if let Some(dec) = &mut self.decoder_a {
+            process_dec(dec, true);
+        }
+        if let Some(dec) = &mut self.decoder_b {
+            process_dec(dec, false);
+        }
+
+        if !is_playing {
+            self.playback.current_pts = current_pts;
+        }
+
+        repainted
+    }
+
+    // -----------------------------------------------------------------------
+    //  Sync uniform buffer from current view state
+    // ---------------------------------------------------------------------------
+    fn sync_uniforms(&self) {
+        let (mut scale_u, mut scale_v) = (1.0, 1.0);
+        
+        let mut canvas_w = self.view.canvas_rect.width();
+        let canvas_h = self.view.canvas_rect.height();
+
+        if self.view.mode == CompareMode::SideBySide {
+            canvas_w /= 2.0;
+        }
+
+        if canvas_w > 0.0 && canvas_h > 0.0 {
+            let mut vid_w: f32 = 0.0;
+            let mut vid_h: f32 = 0.0;
+            if let Some(meta) = self.decoder_a_meta() {
+                vid_w = vid_w.max(meta.width as f32);
+                vid_h = vid_h.max(meta.height as f32);
+            }
+            if let Some(meta) = self.decoder_b_meta() {
+                vid_w = vid_w.max(meta.width as f32);
+                vid_h = vid_h.max(meta.height as f32);
+            }
+
+            if vid_w > 0.0 && vid_h > 0.0 {
+                let canvas_aspect = canvas_w / canvas_h;
+                let video_aspect = vid_w / vid_h;
+
+                if canvas_aspect > video_aspect {
+                    // Window is wider than video (pillarbox)
+                    scale_u = canvas_aspect / video_aspect;
+                } else {
+                    // Window is taller than video (letterbox)
+                    scale_v = video_aspect / canvas_aspect;
+                }
+            }
+        }
+
+        let mut rend = self.renderer.lock();
+        rend.uniforms = ShaderUniforms {
+            split_pos: self.view.split_pos,
+            mode: self.view.mode as u32,
+            diff_mode: self.view.diff_mode as u32,
+            amplifier: self.view.amplifier,
+            zoom: self.view.zoom,
+            pan_u: self.view.pan_u,
+            pan_v: self.view.pan_v,
+            scale_u,
+            scale_v,
+            bg_color: self.view.canvas_bg_color,
+        };
+    }
+
+    // -----------------------------------------------------------------------
+    //  Send seek command to both decoders
+    // -----------------------------------------------------------------------
+    fn seek_both(&self, pts: f64) {
+        if let Some(dec) = &self.decoder_a {
+            let _ = dec.cmd_tx.send(DecoderCommand::Seek(pts));
+        }
+        if let Some(dec) = &self.decoder_b {
+            let _ = dec.cmd_tx.send(DecoderCommand::Seek(pts));
+        }
+    }
+
+    fn play_both(&mut self) {
+        self.playback.is_playing = true;
+        if let Some(s) = &self.sink_a { s.play(); }
+        if let Some(s) = &self.sink_b { s.play(); }
+        if let Some(dec) = &self.decoder_a {
+            let _ = dec.cmd_tx.send(DecoderCommand::Play);
+        }
+        if let Some(dec) = &self.decoder_b {
+            let _ = dec.cmd_tx.send(DecoderCommand::Play);
+        }
+    }
+
+    fn pause_both(&mut self) {
+        self.playback.is_playing = false;
+        if let Some(s) = &self.sink_a { s.pause(); }
+        if let Some(s) = &self.sink_b { s.pause(); }
+        if let Some(dec) = &self.decoder_a {
+            let _ = dec.cmd_tx.send(DecoderCommand::Pause);
+        }
+        if let Some(dec) = &self.decoder_b {
+            let _ = dec.cmd_tx.send(DecoderCommand::Pause);
+        }
+    }
+
+    fn step_forward(&self) {
+        if let Some(dec) = &self.decoder_a {
+            let _ = dec.cmd_tx.send(DecoderCommand::StepForward);
+        }
+        if let Some(dec) = &self.decoder_b {
+            let _ = dec.cmd_tx.send(DecoderCommand::StepForward);
+        }
+    }
+
+    fn step_back(&self) {
+        if let Some(dec) = &self.decoder_a {
+            let _ = dec.cmd_tx.send(DecoderCommand::StepBack);
+        }
+        if let Some(dec) = &self.decoder_b {
+            let _ = dec.cmd_tx.send(DecoderCommand::StepBack);
+        }
+    }
+    pub fn swap_videos(&mut self) {
+        std::mem::swap(&mut self.decoder_a, &mut self.decoder_b);
+        std::mem::swap(&mut self.playback.duration_a, &mut self.playback.duration_b);
+        std::mem::swap(&mut self.view.mute_a, &mut self.view.mute_b);
+        std::mem::swap(&mut self.view.vol_a, &mut self.view.vol_b);
+        std::mem::swap(&mut self.sink_a, &mut self.sink_b);
+        // Force rendering buffers to swap next frame
+        if let Some(dec) = &mut self.decoder_a { dec.next_frame = dec.frame_rx.try_recv().ok(); }
+        if let Some(dec) = &mut self.decoder_b { dec.next_frame = dec.frame_rx.try_recv().ok(); }
+    }
+}
+
+impl eframe::App for DiffPlayerApp {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        if self.playback.is_playing {
+            let dt = ctx.input(|i| i.stable_dt).min(0.1); 
+            self.playback.current_pts += dt as f64;
+            
+            let max_duration = self.playback.duration_a.max(self.playback.duration_b);
+            if max_duration > 0.0 && self.playback.current_pts >= max_duration {
+                // Loop video when reaching the end
+                self.do_seek(0.0);
+            }
+
+            ctx.request_repaint(); // Repaint continuously while playing
+        }
+
+        // Drain new frames and upload to GPU
+        if let Some(rs) = frame.wgpu_render_state() {
+            if self.drain_frames(rs) {
+                ctx.request_repaint();
+            }
+        }
+
+        // Sync uniforms from view state every frame
+        self.sync_uniforms();
+
+        // Drain Audio 
+        if self.playback.is_playing {
+            if let Some(dec) = &mut self.decoder_a {
+                if let Some(sink) = &self.sink_a {
+                    while let Ok(audio) = dec.audio_rx.try_recv() {
+                        let buf = rodio::buffer::SamplesBuffer::new(audio.channels, audio.sample_rate, audio.samples);
+                        sink.append(buf);
+                    }
+                }
+            }
+            if let Some(dec) = &mut self.decoder_b {
+                if let Some(sink) = &self.sink_b {
+                    while let Ok(audio) = dec.audio_rx.try_recv() {
+                        let buf = rodio::buffer::SamplesBuffer::new(audio.channels, audio.sample_rate, audio.samples);
+                        sink.append(buf);
+                    }
+                }
+            }
+        }
+
+        // Update Volumes
+        if let Some(sink) = &self.sink_a {
+            if self.view.mute_a { sink.set_volume(0.0); } else { sink.set_volume(self.view.vol_a); }
+        }
+        if let Some(sink) = &self.sink_b {
+            if self.view.mute_b { sink.set_volume(0.0); } else { sink.set_volume(self.view.vol_b); }
+        }
+
+        // ── Handle screenshot events ────────────────────────────────────────
+        let events = ctx.input(|i| i.raw.events.clone());
+        // (Wgpu Screenshot event listener removed to use OS-native xcap instead)
+        for _event in events {
+            // Processing other events...
+        }
+
+        // ── Keyboard shortcuts ──────────────────────────────────────────────
+        ctx.input(|i| {
+            if i.key_pressed(egui::Key::Space) {
+                if self.playback.is_playing {
+                    self.pause_both();
+                } else {
+                    self.play_both();
+                }
+            }
+            if i.key_pressed(egui::Key::ArrowRight) {
+                self.do_step_fwd();
+            }
+            if i.key_pressed(egui::Key::ArrowLeft) {
+                self.do_step_bck();
+            }
+            if i.key_pressed(egui::Key::Home) {
+                self.do_seek(0.0);
+            }
+            if i.key_pressed(egui::Key::Y) {
+                self.view.mode = match self.view.mode {
+                    CompareMode::SplitScreen => CompareMode::AbsDiff,
+                    CompareMode::AbsDiff => CompareMode::Heatmap,
+                    CompareMode::Heatmap => CompareMode::SideBySide,
+                    CompareMode::SideBySide => CompareMode::SplitScreen,
+                };
+                ctx.request_repaint();
+            }
+            if i.key_pressed(egui::Key::L) {
+                self.view.mode = CompareMode::SideBySide;
+                ctx.request_repaint();
+            }
+            if i.key_pressed(egui::Key::Num1) {
+                self.view.mode = CompareMode::SplitScreen;
+                self.view.split_pos = if self.view.split_pos < 0.05 { 0.5 } else { 0.0 };
+                ctx.request_repaint();
+            }
+            if i.key_pressed(egui::Key::Num2) {
+                self.view.mode = CompareMode::SplitScreen;
+                self.view.split_pos = if self.view.split_pos > 0.95 { 0.5 } else { 1.0 };
+                ctx.request_repaint();
+            }
+            if i.key_pressed(egui::Key::Num3) { self.view.show_hud = !self.view.show_hud; }
+            if i.key_pressed(egui::Key::Num4) { self.view.zoom = 1.0; }
+            if i.key_pressed(egui::Key::Num5) { self.view.zoom = 0.5; }
+            if i.key_pressed(egui::Key::Num6) { self.view.zoom = 1.0; }
+            if i.key_pressed(egui::Key::Num7) { self.view.zoom = 2.0; }
+            if i.key_pressed(egui::Key::Num8) { self.view.zoom = 4.0; }
+            if i.key_pressed(egui::Key::Num9) { self.view.zoom = 8.0; }
+            if i.key_pressed(egui::Key::F) {
+                log::info!("DEBUG: Key 'F' pressed. Triggering xcap OS-native capture.");
+                let dir_for_thread = self.view.screenshot_dir.clone();
+                
+                std::thread::spawn(move || {
+                    let mut success = false;
+                    log::info!("DEBUG: xcap background thread scanning for OS Windows...");
+                    if let Ok(windows) = xcap::Window::all() {
+                        for window in windows {
+                            if let Ok(title) = window.title() {
+                                if title.contains("Production Media") || title.contains("Diferencial") {
+                                    log::info!("DEBUG: Located OS Window -> {}", title);
+                                    if let Ok(img_buf) = window.capture_image() {
+                                        if let Some(dir) = dir_for_thread.as_ref() {
+                                            let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
+                                            let filename = format!("WPP_QC_{timestamp}.png");
+                                            let path = dir.join(filename);
+                                            log::info!("DEBUG: Writing OS-extracted PNG to {:?}", path);
+                                            
+                                            if let Err(e) = img_buf.save(&path) {
+                                                log::error!("DEBUG: Disk write error: {}", e);
+                                            } else {
+                                                log::info!("DEBUG: Screenshot successfully saved!");
+                                                success = true;
+                                            }
+                                        }
+                                    } else {
+                                        log::error!("DEBUG: xcap failed to read window buffer.");
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if !success {
+                        log::error!("DEBUG: xcap failed to locate or read the target WPP window.");
+                    }
+                });
+            }
+            if i.key_pressed(egui::Key::R) {
+                self.view.zoom = 1.0;
+                self.view.pan_u = 0.0;
+                self.view.pan_v = 0.0;
+            }
+            if i.key_pressed(egui::Key::S) { self.swap_videos(); }
+        });
+
+        // ── UI Overlay conditionally rendered ───────────────────────────────
+        if self.view.show_hud {
+            // ── Top menu bar & Toolbar ──────────────────────────────────────────
+            egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
+                crate::ui::controls::show_menu_bar(ui, self);
+            });
+            
+            egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
+                crate::ui::controls::show_toolbar(ui, self);
+            });
+
+            // ── Info / metadata panel (left side) ──────────────────────────────
+            egui::SidePanel::left("info_panel")
+                .resizable(true)
+                .default_width(260.0)
+                .min_width(200.0)
+                .show(ctx, |ui| {
+                    crate::ui::info_panel::show(ui, self);
+                });
+                
+            // ── Audio controls (right side) ────────────────────────────────────
+            egui::SidePanel::right("audio_panel")
+                .resizable(false)
+                .default_width(60.0)
+                .show(ctx, |ui| {
+                    crate::ui::controls::show_audio_panel(ui, self);
+                });
+
+            // ── Timeline (bottom) ───────────────────────────────────────────────
+            egui::TopBottomPanel::bottom("timeline").show(ctx, |ui| {
+                crate::ui::timeline::show(ui, self);
+            });
+        }
+
+        // ── Central canvas ──────────────────────────────────────────────────
+        egui::CentralPanel::default().show(ctx, |ui| {
+            show_canvas(ui, self, frame);
+        });
+
+        // ── Clean Feed Secondary Window (OBS Capture) ──────────────────────
+        if self.view.show_clean_feed_window {
+            let mut show = self.view.show_clean_feed_window;
+            let renderer_clone = Arc::clone(&self.renderer);
+            
+            ctx.show_viewport_immediate(
+                egui::ViewportId::from_hash_of("clean_feed_viewport"),
+                egui::ViewportBuilder::default()
+                    .with_title("DiffPlayerQC - Clean Feed")
+                    .with_inner_size([1280.0, 720.0])
+                    .with_always_on_top(),
+                |ctx, _class| {
+                    if ctx.input(|i| i.viewport().close_requested()) {
+                        show = false;
+                    }
+                    
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        let available = ui.available_rect_before_wrap();
+                        ui.allocate_rect(available, egui::Sense::hover());
+                        ui.painter().add(egui_wgpu::Callback::new_paint_callback(
+                            available,
+                            RenderCallback { renderer: renderer_clone },
+                        ));
+                        
+                        // Clean Feed Overlay
+                        let mode_str = match self.view.mode {
+                            CompareMode::SplitScreen => {
+                                if self.view.split_pos <= 0.01 { "Solo B / B Only" }
+                                else if self.view.split_pos >= 0.99 { "Solo A / A Only" }
+                                else { "Separador / Split" }
+                            },
+                            CompareMode::AbsDiff => "Diferencia / Diff",
+                            CompareMode::Heatmap => "Mapa Calor / Heatmap",
+                            CompareMode::SideBySide => "Lado a Lado / Side-by-Side",
+                        };
+                        
+                        let video_str = match self.view.mode {
+                            CompareMode::SplitScreen => {
+                                if self.view.split_pos <= 0.01 { "VIDEO A" }
+                                else if self.view.split_pos >= 0.99 { "VIDEO B" }
+                                else { "VIDEO A + B" }
+                            },
+                            _ => "VIDEO A + B",
+                        };
+
+                        let pts = self.playback.current_pts;
+                        // For a rough frame estimate we assume 24 fps, as we don't have global fps easily exposed without reaching decoder
+                        let rough_frame = (pts * 24.0).round() as u64;
+                        let overlay_text = format!("{} | {} | PTS: {:.3}s | Frame ~= {}", video_str, mode_str, pts, rough_frame);
+                        
+                        // We draw a faint background to ensure readability on bright scenes
+                        let text_pos = available.min + egui::vec2(20.0, 20.0);
+                        let galley = ui.painter().layout_no_wrap(
+                            overlay_text,
+                            egui::FontId::proportional(22.0),
+                            egui::Color32::WHITE,
+                        );
+                        let bg_rect = galley.rect.translate(text_pos.to_vec2()).expand(6.0);
+                        ui.painter().rect_filled(bg_rect, 4.0, egui::Color32::from_black_alpha(150));
+                        ui.painter().galley(text_pos, galley, egui::Color32::WHITE);
+                    });
+                },
+            );
+            
+            self.view.show_clean_feed_window = show;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  Video canvas with zoom / pan interaction
+// ---------------------------------------------------------------------------
+
+fn show_canvas(ui: &mut egui::Ui, app: &mut DiffPlayerApp, _frame: &mut eframe::Frame) {
+    let available = ui.available_rect_before_wrap();
+    app.view.canvas_rect = available;
+
+    let response = ui.allocate_rect(available, egui::Sense::click_and_drag());
+
+    // -- Mouse wheel zoom ---------------------------------------------------
+    let scroll_delta = ui.input(|i| i.smooth_scroll_delta.y);
+    if response.hovered() && scroll_delta != 0.0 {
+        let zoom_factor = if scroll_delta > 0.0 { 1.1f32 } else { 1.0 / 1.1 };
+        app.view.zoom = (app.view.zoom * zoom_factor).clamp(0.25, 32.0);
+    }
+
+    // -- Drag to pan OR drag split line (Available in all modes) -------------
+    if response.drag_started() {
+        let pos = response.interact_pointer_pos().unwrap_or_default();
+        let split_x = available.left() + app.view.split_pos * available.width();
+        
+        if (pos.x - split_x).abs() < 15.0 {
+            app.dragging_split = true;
+        } else {
+            app.dragging_split = false;
+            app.drag_start = Some((pos, app.view.pan_u, app.view.pan_v));
+        }
+    }
+
+    if response.dragged() {
+        if app.dragging_split {
+            let pos = response.interact_pointer_pos().unwrap_or_default();
+            let relative_x = (pos.x - available.left()) / available.width();
+            app.view.split_pos = relative_x.clamp(0.0, 1.0);
+            ui.ctx().request_repaint();
+        } else if let Some((start_pos, start_pu, start_pv)) = app.drag_start {
+            let delta = response.interact_pointer_pos().unwrap_or_default() - start_pos;
+            let uv_delta_u = -delta.x / available.width()  / app.view.zoom;
+            let uv_delta_v = -delta.y / available.height() / app.view.zoom;
+            app.view.pan_u = (start_pu + uv_delta_u).clamp(-0.5, 0.5);
+            app.view.pan_v = (start_pv + uv_delta_v).clamp(-0.5, 0.5);
+            ui.ctx().request_repaint();
+        }
+    }
+
+    if response.drag_stopped() {
+        app.drag_start = None;
+        app.dragging_split = false;
+    }
+
+    // -- Cursor hint for dragging split (Available in all modes) ------------
+    if let Some(ptr) = ui.ctx().pointer_hover_pos() {
+        let split_x = available.left() + app.view.split_pos * available.width();
+        if available.contains(ptr) && (ptr.x - split_x).abs() < 10.0 {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+        }
+    }
+
+    // -- Double-click to reset zoom -----------------------------------------
+    if response.double_clicked() {
+        app.view.zoom  = 1.0;
+        app.view.pan_u = 0.0;
+        app.view.pan_v = 0.0;
+    }
+
+    // -- Draw the wgpu render callback into this rect ----------------------
+    let renderer_clone = Arc::clone(&app.renderer);
+    ui.painter().add(egui_wgpu::Callback::new_paint_callback(
+        available,
+        RenderCallback { renderer: renderer_clone },
+    ));
+
+    // -- Overlay: "No video" message when nothing is loaded ----------------
+    let has_a = app.decoder_a.is_some();
+    let has_b = app.decoder_b.is_some();
+    if !has_a || !has_b {
+        let center = available.center();
+        let is_es = app.view.lang == Language::Es;
+        let text = if !has_a && !has_b {
+            if is_es { "Abre el Vídeo A y el Vídeo B para empezar la comparación" } else { "Open Video A and Video B to begin comparison" }
+        } else if !has_a {
+            if is_es { "Abre el Vídeo A  ←  (panel izquierdo)" } else { "Open Video A  ←  (left panel)" }
+        } else {
+            if is_es { "Abre el Vídeo B  →  (panel izquierdo)" } else { "Open Video B  →  (left panel)" }
+        };
+        ui.painter().text(
+            center,
+            egui::Align2::CENTER_CENTER,
+            text,
+            egui::FontId::proportional(20.0),
+            ui.visuals().text_color().gamma_multiply(0.5),
+        );
+    }
+
+    // -- Zoom indicator overlay (top-right of canvas) ----------------------
+    if (app.view.zoom - 1.0).abs() > 0.01 {
+        let zoom_text = format!("{:.1}×", app.view.zoom);
+        let pos = egui::pos2(available.right() - 8.0, available.top() + 8.0);
+        ui.painter().text(
+            pos,
+            egui::Align2::RIGHT_TOP,
+            &zoom_text,
+            egui::FontId::monospace(13.0),
+            egui::Color32::from_rgba_premultiplied(200, 200, 100, 200),
+        );
+    }
+
+    // -- Frame counter overlay (bottom-left of canvas, unobtrusive) --------
+    // Shows permanently, including during screenshots.
+    {
+        let fps_a = app.decoder_a_meta().map(|m| m.fps).unwrap_or(25.0);
+        let current_pts = app.playback().current_pts;
+        let frame_num = (current_pts * fps_a).round() as u64;
+        let is_es = app.view().lang == Language::Es;
+        
+        let frame_text = format!("{} {}", if is_es { "Fr." } else { "Frame" }, frame_num);
+        let pos = egui::pos2(available.left() + 8.0, available.bottom() - 8.0);
+        ui.painter().text(
+            pos,
+            egui::Align2::LEFT_BOTTOM,
+            &frame_text,
+            egui::FontId::monospace(14.0),
+            egui::Color32::from_black_alpha(150), // Subtle shadow
+        );
+        ui.painter().text(
+            pos - egui::Vec2::new(1.0, 1.0),
+            egui::Align2::LEFT_BOTTOM,
+            &frame_text,
+            egui::FontId::monospace(14.0),
+            egui::Color32::from_white_alpha(150), // Unobtrusive text
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  Font setup
+// ---------------------------------------------------------------------------
+
+fn setup_fonts(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+
+    // Try loading Arial from standard Windows path
+    let arial_path = "C:/Windows/Fonts/arial.ttf";
+    if let Ok(bytes) = std::fs::read(arial_path) {
+        fonts.font_data.insert(
+            "Arial".to_owned(),
+            egui::FontData::from_owned(bytes),
+        );
+        // Insert Arial at the front of the proportional list
+        fonts
+            .families
+            .entry(egui::FontFamily::Proportional)
+            .or_default()
+            .insert(0, "Arial".to_owned());
+        // Also use as the monospace fallback
+        fonts
+            .families
+            .entry(egui::FontFamily::Monospace)
+            .or_default()
+            .push("Arial".to_owned());
+    }
+
+    ctx.set_fonts(fonts);
+
+    // Apply overall style tweaks
+    let mut style = (*ctx.style()).clone();
+    style.spacing.item_spacing  = egui::vec2(8.0, 6.0);
+    style.spacing.button_padding = egui::vec2(10.0, 5.0);
+    style.spacing.slider_width  = 120.0;
+    ctx.set_style(style);
+}
+
+// Expose app fields the UI modules need
+impl DiffPlayerApp {
+    pub fn view_mut(&mut self) -> &mut ViewState { &mut self.view }
+    pub fn view(&self) -> &ViewState { &self.view }
+    pub fn playback(&self) -> &PlaybackState { &self.playback }
+    pub fn decoder_a_meta(&self) -> Option<&ColorMetadata> { self.decoder_a.as_ref().map(|d| &d.meta) }
+    pub fn decoder_b_meta(&self) -> Option<&ColorMetadata> { self.decoder_b.as_ref().map(|d| &d.meta) }
+    pub fn decoder_a_path(&self) -> Option<&str> { self.decoder_a.as_ref().map(|d| d.path.as_str()) }
+    pub fn decoder_b_path(&self) -> Option<&str> { self.decoder_b.as_ref().map(|d| d.path.as_str()) }
+    pub fn open_video_a(&mut self) { self.open_video(Channel::A); }
+    pub fn open_video_b(&mut self) { self.open_video(Channel::B); }
+    pub fn do_play(&mut self)         { self.play_both(); }
+    pub fn do_pause(&mut self)        { self.pause_both(); }
+    pub fn do_step_fwd(&mut self) { 
+        self.pause_both();
+        let fps = match (self.decoder_a_meta(), self.decoder_b_meta()) {
+            (Some(a), _) if a.fps > 0.0 => a.fps,
+            (_, Some(b)) if b.fps > 0.0 => b.fps,
+            _ => 25.0,
+        };
+        self.playback.current_pts += 1.0 / fps;
+        self.step_forward();
+    }
+    pub fn do_step_bck(&mut self) { 
+        self.pause_both();
+        let fps = match (self.decoder_a_meta(), self.decoder_b_meta()) {
+            (Some(a), _) if a.fps > 0.0 => a.fps,
+            (_, Some(b)) if b.fps > 0.0 => b.fps,
+            _ => 25.0,
+        };
+        let t = (self.playback.current_pts - 1.0 / fps).max(0.0);
+        self.do_seek(t);
+    }
+    pub fn do_seek(&mut self, t: f64) { 
+        self.seek_both(t); 
+        self.playback.current_pts = t; 
+        
+        // Clear audio sink buffers since we are jumping in time
+        if let Some(s) = &self.sink_a { s.clear(); s.play(); } 
+        if let Some(s) = &self.sink_b { s.clear(); s.play(); }
+        if !self.playback.is_playing {
+            if let Some(s) = &self.sink_a { s.pause(); }
+            if let Some(s) = &self.sink_b { s.pause(); }
+        }
+
+        // Discard any trailing frames in the pipeline so the next frame is exactly the requested one
+        if let Some(dec) = &mut self.decoder_a {
+            dec.next_frame = None;
+            while dec.frame_rx.try_recv().is_ok() {}
+            while dec.audio_rx.try_recv().is_ok() {}
+        }
+        if let Some(dec) = &mut self.decoder_b {
+            dec.next_frame = None;
+            while dec.frame_rx.try_recv().is_ok() {}
+            while dec.audio_rx.try_recv().is_ok() {}
+        }
+
+        // Restore decoder playback state if we were playing. Decoder threads pause automatically on seek.
+        if self.playback.is_playing {
+            self.play_both();
+        }
+    }
+}

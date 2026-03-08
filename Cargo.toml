@@ -1,0 +1,40 @@
+[package]
+name = "diffplayerqc"
+version = "1.1.0"
+edition = "2021"
+description = "Frame-accurate differential video QC player"
+authors = ["DiffPlayerQC"]
+
+[[bin]]
+name = "diffplayerqc"
+path = "src/main.rs"
+
+[dependencies]
+eframe        = { version = "0.27", features = ["wgpu"] }
+egui          = "0.27"
+egui-wgpu     = "0.27"
+wgpu          = { version = "0.19", features = ["wgsl"] }
+ffmpeg-sys-next = "7.1"
+crossbeam-channel = "0.5"
+anyhow        = "1"
+bytemuck      = { version = "1", features = ["derive"] }
+dark-light    = "1"
+rfd           = "0.14"
+log           = "0.4"
+env_logger    = "0.11"
+parking_lot   = "0.12"
+image = "0.25.9"
+directories = "6.0.0"
+chrono = "0.4.44"
+xcap = "0.8.3"
+rodio = "0.19"
+
+[profile.release]
+opt-level     = "s"     # Optimizar para tamaño
+lto           = true    # Link Time Optimization (más eficiente)
+codegen-units = 1       # Mejor optimización a costa de tiempo de compilación
+strip         = true    # Eliminar símbolos de depuración (reduce mucho el tamaño)
+panic         = "abort" # Reducir el tamaño eliminando el control de pánicos
+
+[profile.dev]
+opt-level     = 1
