@@ -1,6 +1,6 @@
 [package]
 name = "diffplayerqc"
-version = "1.2.5"
+version = "1.2.7"
 edition = "2021"
 description = "Frame-accurate differential video QC player"
 authors = ["DiffPlayerQC"]

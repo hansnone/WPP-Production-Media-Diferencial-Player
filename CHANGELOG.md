@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.7] - 2026-03-09
+
+### Fixed
+- Corrección del bug de arrastrar y soltar: el archivo ahora se carga en el canal correcto (A izquierda / B derecha) en lugar de siempre en B.
+
+### Changed
+- Interfaz limpiada: barra de herramientas eliminada. Todos los controles (apertura de ficheros, reproducción, modos, sliders, zoom, color de fondo) se han integrado inline en la barra de menú superior en una sola fila compacta.
+
+## [1.2.6] - 2026-03-09
+
+### Added
+- Soporte para arrastrar y soltar archivos de vídeo directamente sobre la ventana. Soltar en la mitad izquierda carga como Vídeo A; en la mitad derecha como Vídeo B. Si ya había un vídeo cargado se reemplaza.
+- Indicador visual (overlay) durante el arrastre que muestra las zonas A y B con etiquetas.
+
 ## [1.2.5] - 2026-03-09
 
 ### Fixed

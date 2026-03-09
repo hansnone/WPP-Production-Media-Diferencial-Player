@@ -1,4 +1,4 @@
-// ui/controls.rs — Top toolbar: file open, playback, mode, sliders
+// ui/controls.rs — Menu bar (drop-down menus + inline toolbar controls)
 
 use egui::{Color32, RichText, Ui};
 
@@ -6,92 +6,123 @@ use crate::app::DiffPlayerApp;
 use crate::types::{CompareMode, Language};
 use crate::ui::theme::apply_theme;
 
+/// Renders the full menu bar: classic dropdown menus followed by an inline
+/// compact toolbar row, all in a single top panel.
 pub fn show_menu_bar(ui: &mut Ui, app: &mut DiffPlayerApp) {
-    let _is_es = app.view().lang == Language::Es;
-
     egui::menu::bar(ui, |ui| {
-        ui.menu_button(match app.view().lang { Language::Es => "Archivo", Language::En => "File", Language::Quenya => "Parma" }, |ui| {
-            if ui.button(match app.view().lang { Language::Es => "Abrir VÍDEO A...", Language::En => "Open VIDEO A...", Language::Quenya => "Panya VÍDEO A..." }).clicked() {
-                app.open_video_a();
-                ui.close_menu();
-            }
-            if ui.button(match app.view().lang { Language::Es => "Abrir VÍDEO B...", Language::En => "Open VIDEO B...", Language::Quenya => "Panya VÍDEO B..." }).clicked() {
-                app.open_video_b();
-                ui.close_menu();
-            }
+        // ── Dropdown menus ──────────────────────────────────────────────────
+
+        ui.menu_button(match app.view().lang {
+            Language::Es => "Archivo", Language::En => "File", Language::Quenya => "Parma",
+        }, |ui| {
+            if ui.button(match app.view().lang {
+                Language::Es => "Abrir VÍDEO A…", Language::En => "Open VIDEO A…", Language::Quenya => "Panya VÍDEO A…",
+            }).clicked() { app.open_video_a(); ui.close_menu(); }
+
+            if ui.button(match app.view().lang {
+                Language::Es => "Abrir VÍDEO B…", Language::En => "Open VIDEO B…", Language::Quenya => "Panya VÍDEO B…",
+            }).clicked() { app.open_video_b(); ui.close_menu(); }
+
             ui.separator();
-            if ui.button(match app.view().lang { Language::Es => "Guardar Frame como PNG (F)", Language::En => "Save Frame as PNG (F)", Language::Quenya => "Marta Frame ve PNG (F)" }).clicked() {
-                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Screenshot);
-                ui.close_menu();
-            }
-            if ui.button(match app.view().lang { Language::Es => "Elegir carpeta de capturas...", Language::En => "Set Screenshot Folder...", Language::Quenya => "Cilta Screenshot Nómë..." }).clicked() {
+            if ui.button(match app.view().lang {
+                Language::Es => "Guardar Frame como PNG  (F)",
+                Language::En => "Save Frame as PNG  (F)",
+                Language::Quenya => "Marta Frame ve PNG  (F)",
+            }).clicked() { ui.ctx().send_viewport_cmd(egui::ViewportCommand::Screenshot); ui.close_menu(); }
+
+            if ui.button(match app.view().lang {
+                Language::Es => "Elegir carpeta de capturas…",
+                Language::En => "Set Screenshot Folder…",
+                Language::Quenya => "Cilta Screenshot Nómë…",
+            }).clicked() {
                 if let Some(folder) = rfd::FileDialog::new().pick_folder() {
                     app.view_mut().screenshot_dir = Some(folder);
                 }
                 ui.close_menu();
             }
             ui.separator();
-            if ui.button(match app.view().lang { Language::Es => "Salir (Esc)", Language::En => "Quit (Esc)", Language::Quenya => "Vanya (Esc)" }).clicked() {
-                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-            }
+            if ui.button(match app.view().lang {
+                Language::Es => "Salir  (Esc)", Language::En => "Quit  (Esc)", Language::Quenya => "Vanya  (Esc)",
+            }).clicked() { ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close); }
         });
 
-        ui.menu_button(match app.view().lang { Language::Es => "Vista", Language::En => "View", Language::Quenya => "Cén" }, |ui| {
-            if ui.button(match app.view().lang { Language::Es => "Ocultar/Mostrar Interfaz (3)", Language::En => "Toggle HUD (3)", Language::Quenya => "Halya/Tanë HUD (3)" }).clicked() {
-                let current = app.view().show_hud;
-                app.view_mut().show_hud = !current;
+        ui.menu_button(match app.view().lang {
+            Language::Es => "Vista", Language::En => "View", Language::Quenya => "Cén",
+        }, |ui| {
+            if ui.button(match app.view().lang {
+                Language::Es => "Ocultar/Mostrar Interfaz  (3)",
+                Language::En => "Toggle HUD  (3)",
+                Language::Quenya => "Halya/Tanë HUD  (3)",
+            }).clicked() {
+                let v = app.view().show_hud;
+                app.view_mut().show_hud = !v;
                 ui.close_menu();
             }
             ui.separator();
-            if ui.button(match app.view().lang { Language::Es => "Restaurar Zoom (R)", Language::En => "Reset Zoom (R)", Language::Quenya => "En-panya Zoom (R)" }).clicked() {
-                app.view_mut().zoom = 1.0;
-                app.view_mut().pan_u = 0.0;
-                app.view_mut().pan_v = 0.0;
-            }
-            if ui.button("Zoom 50% (5)").clicked() { app.view_mut().zoom = 0.5; }
-            if ui.button("Zoom 100% (6)").clicked() { app.view_mut().zoom = 1.0; }
-            if ui.button("Zoom 200% (7)").clicked() { app.view_mut().zoom = 2.0; }
-            if ui.button("Zoom 400% (8)").clicked() { app.view_mut().zoom = 4.0; }
-            if ui.button("Zoom 800% (9)").clicked() { app.view_mut().zoom = 8.0; }
+            if ui.button(match app.view().lang {
+                Language::Es => "Restaurar Zoom  (R)", Language::En => "Reset Zoom  (R)", Language::Quenya => "En-panya Zoom  (R)",
+            }).clicked() { app.view_mut().zoom = 1.0; app.view_mut().pan_u = 0.0; app.view_mut().pan_v = 0.0; ui.close_menu(); }
+            if ui.button("Zoom 50%  (5)").clicked()  { app.view_mut().zoom = 0.5; ui.close_menu(); }
+            if ui.button("Zoom 100%  (6)").clicked() { app.view_mut().zoom = 1.0; ui.close_menu(); }
+            if ui.button("Zoom 200%  (7)").clicked() { app.view_mut().zoom = 2.0; ui.close_menu(); }
+            if ui.button("Zoom 400%  (8)").clicked() { app.view_mut().zoom = 4.0; ui.close_menu(); }
+            if ui.button("Zoom 800%  (9)").clicked() { app.view_mut().zoom = 8.0; ui.close_menu(); }
         });
 
-        ui.menu_button(match app.view().lang { Language::Es => "Reproducción", Language::En => "Playback", Language::Quenya => "Lirë" }, |ui| {
+        ui.menu_button(match app.view().lang {
+            Language::Es => "Reproducción", Language::En => "Playback", Language::Quenya => "Lirë",
+        }, |ui| {
             let is_p = app.playback().is_playing;
-            let play_text = match (is_p, app.view().lang) {
-                (true, Language::Es) => "Pausar (Espacio)",
-                (true, Language::En) => "Pause (Space)",
-                (true, Language::Quenya) => "Talta (Espacio)",
-                (false, Language::Es) => "Reproducir (Espacio)",
-                (false, Language::En) => "Play (Space)",
-                (false, Language::Quenya) => "Lir (Espacio)",
-            };
-            if ui.button(play_text).clicked() {
-                if is_p { app.do_pause(); } else { app.do_play(); }
-                ui.close_menu();
-            }
-            if ui.button(match app.view().lang { Language::Es => "Retroceder Frame (←)", Language::En => "Step Backward (←)", Language::Quenya => "Nánë Frame (←)" }).clicked() {
-                app.do_step_bck();
-            }
-            if ui.button(match app.view().lang { Language::Es => "Avanzar Frame (→)", Language::En => "Step Forward (→)", Language::Quenya => "Pónë Frame (→)" }).clicked() {
-                app.do_step_fwd();
-            }
-            if ui.button(match app.view().lang { Language::Es => "Ir al inicio (Home)", Language::En => "Go to Start (Home)", Language::Quenya => "Mena Yessë (Home)" }).clicked() {
-                app.do_seek(0.0);
-            }
+            if ui.button(match (is_p, app.view().lang) {
+                (true,  Language::Es) => "Pausar  (Espacio)",
+                (true,  Language::En) => "Pause  (Space)",
+                (true,  Language::Quenya) => "Talta  (Espacio)",
+                (false, Language::Es) => "Reproducir  (Espacio)",
+                (false, Language::En) => "Play  (Space)",
+                (false, Language::Quenya) => "Lir  (Espacio)",
+            }).clicked() { if is_p { app.do_pause(); } else { app.do_play(); } ui.close_menu(); }
+            if ui.button(match app.view().lang {
+                Language::Es => "Retroceder Frame  (←)", Language::En => "Step Backward  (←)", Language::Quenya => "Nánë Frame  (←)",
+            }).clicked() { app.do_step_bck(); ui.close_menu(); }
+            if ui.button(match app.view().lang {
+                Language::Es => "Avanzar Frame  (→)", Language::En => "Step Forward  (→)", Language::Quenya => "Pónë Frame  (→)",
+            }).clicked() { app.do_step_fwd(); ui.close_menu(); }
+            if ui.button(match app.view().lang {
+                Language::Es => "Ir al inicio  (Home)", Language::En => "Go to Start  (Home)", Language::Quenya => "Mena Yessë  (Home)",
+            }).clicked() { app.do_seek(0.0); ui.close_menu(); }
         });
 
-        ui.menu_button(match app.view().lang { Language::Es => "Opciones", Language::En => "Options", Language::Quenya => "Cilmë" }, |ui| {
-            if ui.button(match app.view().lang { Language::Es => "Intercambiar A y B (S)", Language::En => "Swap A and B (S)", Language::Quenya => "Quista A ar B (S)" }).clicked() {
-                app.swap_videos();
-                ui.close_menu();
-            }
+        ui.menu_button(match app.view().lang {
+            Language::Es => "Opciones", Language::En => "Options", Language::Quenya => "Cilmë",
+        }, |ui| {
+            if ui.button(match app.view().lang {
+                Language::Es => "Intercambiar A y B  (S)", Language::En => "Swap A and B  (S)", Language::Quenya => "Quista A ar B  (S)",
+            }).clicked() { app.swap_videos(); ui.close_menu(); }
+
             ui.separator();
-            ui.menu_button(match app.view().lang { Language::Es => "Idioma / Language", Language::En => "Language / Idioma", Language::Quenya => "Lambë" }, |ui| {
+
+            // Canvas background colour
+            ui.horizontal(|ui| {
+                ui.label(match app.view().lang {
+                    Language::Es => "Color fondo:", Language::En => "Canvas color:", Language::Quenya => "Talan cala:",
+                });
+                let mut bg = app.view().canvas_bg_color;
+                if ui.color_edit_button_rgb(&mut bg).changed() {
+                    app.view_mut().canvas_bg_color = bg;
+                }
+            });
+
+            ui.separator();
+            ui.menu_button(match app.view().lang {
+                Language::Es => "Idioma / Language", Language::En => "Language / Idioma", Language::Quenya => "Lambë",
+            }, |ui| {
                 if ui.radio_value(&mut app.view_mut().lang, Language::En, "English").clicked() { ui.close_menu(); }
                 if ui.radio_value(&mut app.view_mut().lang, Language::Es, "Español").clicked() { ui.close_menu(); }
                 if ui.radio_value(&mut app.view_mut().lang, Language::Quenya, "Quenya (Elvish)").clicked() { ui.close_menu(); }
             });
-            ui.menu_button(match app.view().lang { Language::Es => "Tema / Theme", Language::En => "Theme / Tema", Language::Quenya => "Cala" }, |ui| {
+            ui.menu_button(match app.view().lang {
+                Language::Es => "Tema / Theme", Language::En => "Theme / Tema", Language::Quenya => "Cala",
+            }, |ui| {
                 let mut current_theme = app.view().theme;
                 let themes = [
                     (crate::types::Theme::Dark, "Dark"),
@@ -132,278 +163,209 @@ pub fn show_menu_bar(ui: &mut Ui, app: &mut DiffPlayerApp) {
             });
         });
 
-        ui.menu_button(match app.view().lang { Language::Es => "Emisión", Language::En => "Broadcast", Language::Quenya => "Sirë" }, |ui| {
+        ui.menu_button(match app.view().lang {
+            Language::Es => "Emisión", Language::En => "Broadcast", Language::Quenya => "Sirë",
+        }, |ui| {
             let mut enabled = app.view().show_clean_feed_window;
-            if ui.checkbox(&mut enabled, match app.view().lang { Language::Es => "Ventana de Salida (OBS)", Language::En => "Clean Feed Window (OBS)", Language::Quenya => "Vëa Cén (OBS)" }).clicked() {
-                app.view_mut().show_clean_feed_window = enabled;
-                ui.close_menu();
-            }
-            ui.label(RichText::new(match app.view().lang { Language::Es => "Capturar ventana en OBS", Language::En => "Capture window in OBS", Language::Quenya => "Mapa vëa mi OBS" }).weak().size(10.0));
+            if ui.checkbox(&mut enabled, match app.view().lang {
+                Language::Es => "Ventana de Salida  (OBS)",
+                Language::En => "Clean Feed Window  (OBS)",
+                Language::Quenya => "Vëa Cén  (OBS)",
+            }).clicked() { app.view_mut().show_clean_feed_window = enabled; ui.close_menu(); }
+            ui.label(RichText::new(match app.view().lang {
+                Language::Es => "Capturar ventana en OBS",
+                Language::En => "Capture window in OBS",
+                Language::Quenya => "Mapa vëa mi OBS",
+            }).weak().size(10.0));
         });
-    });
-}
 
-pub fn show_toolbar(ui: &mut Ui, app: &mut DiffPlayerApp) {
-    let _is_es = app.view().lang == Language::Es;
+        // ── Separator before inline controls ───────────────────────────────
+        ui.separator();
 
-    ui.horizontal_wrapped(|ui| {
+        // ── Inline compact controls ─────────────────────────────────────────
 
-        // ── File open buttons ───────────────────────────────────────────
+        // File open buttons
         let has_a = app.decoder_a_path().is_some();
         let has_b = app.decoder_b_path().is_some();
 
-        let a_label = if let Some(p) = app.decoder_a_path() {
-            short_name(p)
-        } else {
-            match app.view().lang { Language::Es => "Abrir A…".to_owned(), Language::En => "Open A…".to_owned(), Language::Quenya => "Panya A…".to_owned() }
-        };
-        let b_label = if let Some(p) = app.decoder_b_path() {
-            short_name(p)
-        } else {
-            match app.view().lang { Language::Es => "Abrir B…".to_owned(), Language::En => "Open B…".to_owned(), Language::Quenya => "Panya B…".to_owned() }
-        };
+        let a_label = app.decoder_a_path().map(short_name)
+            .unwrap_or_else(|| match app.view().lang {
+                Language::Es => "A…".to_owned(), Language::En => "A…".to_owned(), Language::Quenya => "A…".to_owned(),
+            });
+        let b_label = app.decoder_b_path().map(short_name)
+            .unwrap_or_else(|| match app.view().lang {
+                Language::Es => "B…".to_owned(), Language::En => "B…".to_owned(), Language::Quenya => "B…".to_owned(),
+            });
 
-        let btn_a = egui::Button::new(
-            RichText::new(format!("▶ A: {a_label}"))
+        if ui.add(egui::Button::new(
+            RichText::new(format!("▶A {a_label}"))
                 .color(if has_a { Color32::from_rgb(100, 200, 120) } else { Color32::LIGHT_GRAY }),
-        );
-        let btn_b = egui::Button::new(
-            RichText::new(format!("▶ B: {b_label}"))
+        )).on_hover_text(match app.view().lang {
+            Language::Es => "Abrir Vídeo A", Language::En => "Open Video A", Language::Quenya => "Panya A",
+        }).clicked() { app.open_video_a(); }
+
+        if ui.add(egui::Button::new(
+            RichText::new(format!("▶B {b_label}"))
                 .color(if has_b { Color32::from_rgb(100, 160, 240) } else { Color32::LIGHT_GRAY }),
-        );
-
-        if ui.add(btn_a).clicked() {
-            app.open_video_a();
-        }
-        if ui.add(btn_b).clicked() {
-            app.open_video_b();
-        }
+        )).on_hover_text(match app.view().lang {
+            Language::Es => "Abrir Vídeo B", Language::En => "Open Video B", Language::Quenya => "Panya B",
+        }).clicked() { app.open_video_b(); }
 
         ui.separator();
 
-        // ── Playback controls ───────────────────────────────────────────
+        // Playback controls
         let is_playing = app.playback().is_playing;
-
-        if ui.button(RichText::new("⏮").size(18.0)).on_hover_text(match app.view().lang { Language::Es => "Ir al inicio", Language::En => "Go to start", Language::Quenya => "Mena yessë" }).clicked() {
-            app.do_seek(0.0);
-        }
-        if ui
-            .button(RichText::new("⏪").size(18.0))
-            .on_hover_text(match app.view().lang { Language::Es => "Retroceder 1 frame (←)", Language::En => "Step back (←)", Language::Quenya => "Nánë 1 frame (←)" })
-            .clicked()
-        {
-            app.do_step_bck();
-        }
-
-        let play_icon = if is_playing { "⏸" } else { "▶" };
-        let play_tip  = match (is_playing, app.view().lang) {
-            (true, Language::Es) => "Pausar (Espacio)",
-            (true, Language::En) => "Pause (Space)",
-            (true, Language::Quenya) => "Talta (Espacio)",
-            (false, Language::Es) => "Reproducir (Espacio)",
-            (false, Language::En) => "Play (Space)",
-            (false, Language::Quenya) => "Lir (Espacio)",
-        };
-        if ui.button(RichText::new(play_icon).size(18.0)).on_hover_text(play_tip).clicked() {
-            if is_playing { app.do_pause(); } else { app.do_play(); }
-        }
-
-        if ui
-            .button(RichText::new("⏩").size(18.0))
-            .on_hover_text(match app.view().lang { Language::Es => "Avanzar 1 frame (→)", Language::En => "Step forward (→)", Language::Quenya => "Pónë 1 frame (→)" })
-            .clicked()
-        {
-            app.do_step_fwd();
-        }
+        if ui.button(RichText::new("⏮").size(16.0)).on_hover_text(match app.view().lang {
+            Language::Es => "Inicio", Language::En => "Start", Language::Quenya => "Yessë",
+        }).clicked() { app.do_seek(0.0); }
+        if ui.button(RichText::new("⏪").size(16.0)).on_hover_text(match app.view().lang {
+            Language::Es => "Retroceder (←)", Language::En => "Step back (←)", Language::Quenya => "Nánë (←)",
+        }).clicked() { app.do_step_bck(); }
+        if ui.button(RichText::new(if is_playing { "⏸" } else { "▶" }).size(16.0))
+            .on_hover_text(match app.view().lang {
+                Language::Es => "Reproducir/Pausar (Espacio)", Language::En => "Play/Pause (Space)", Language::Quenya => "Lir/Talta",
+            }).clicked()
+        { if is_playing { app.do_pause(); } else { app.do_play(); } }
+        if ui.button(RichText::new("⏩").size(16.0)).on_hover_text(match app.view().lang {
+            Language::Es => "Avanzar (→)", Language::En => "Step fwd (→)", Language::Quenya => "Pónë (→)",
+        }).clicked() { app.do_step_fwd(); }
 
         ui.separator();
 
-        // ── Display mode ────────────────────────────────────────────────
-        ui.label(match app.view().lang { Language::Es => "Vista:", Language::En => "View:", Language::Quenya => "Cén:" });
-        
+        // Display mode buttons
         let c_mode = app.view().mode;
-        let split = app.view().split_pos;
-        let is_a = c_mode == CompareMode::SplitScreen && split > 0.95;
-        let is_b = c_mode == CompareMode::SplitScreen && split < 0.05;
+        let split  = app.view().split_pos;
+        let is_a     = c_mode == CompareMode::SplitScreen && split > 0.95;
+        let is_b     = c_mode == CompareMode::SplitScreen && split < 0.05;
         let is_split = c_mode == CompareMode::SplitScreen && !is_a && !is_b;
+        let active   = Color32::from_rgb(80, 130, 200);
 
-        let active_color = Color32::from_rgb(80, 130, 200);
+        macro_rules! mode_btn {
+            ($label:expr, $active_cond:expr, $action:block) => {
+                if ui.add(egui::Button::new($label).fill(
+                    if $active_cond { active } else { Color32::TRANSPARENT }
+                )).clicked() $action
+            };
+        }
 
-        if ui.add(egui::Button::new(match app.view().lang { Language::Es => "Solo A (1)", Language::En => "A Only (1)", Language::Quenya => "Erya A (1)" }).fill(if is_a { active_color } else { Color32::TRANSPARENT })).clicked() {
-            app.view_mut().mode = CompareMode::SplitScreen;
-            app.view_mut().split_pos = 1.0;
-        }
-        if ui.add(egui::Button::new(match app.view().lang { Language::Es => "Solo B (2)", Language::En => "B Only (2)", Language::Quenya => "Erya B (2)" }).fill(if is_b { active_color } else { Color32::TRANSPARENT })).clicked() {
-            app.view_mut().mode = CompareMode::SplitScreen;
-            app.view_mut().split_pos = 0.0;
-        }
-        if ui.add(egui::Button::new(match app.view().lang { Language::Es => "Cortina (Y)", Language::En => "Split (Y)", Language::Quenya => "Hyanda (Y)" }).fill(if is_split { active_color } else { Color32::TRANSPARENT })).clicked() {
-            app.view_mut().mode = CompareMode::SplitScreen;
-            if is_a || is_b { app.view_mut().split_pos = 0.5; }
-        }
-        if ui.add(egui::Button::new(match app.view().lang { Language::Es => "Diferencia (Y)", Language::En => "Diff (Y)", Language::Quenya => "Winya (Y)" }).fill(if c_mode == CompareMode::AbsDiff { active_color } else { Color32::TRANSPARENT })).clicked() {
-            app.view_mut().mode = CompareMode::AbsDiff;
-        }
-        if ui.add(egui::Button::new(match app.view().lang { Language::Es => "Mapa Calor (Y)", Language::En => "Heatmap (Y)", Language::Quenya => "Úrë (Y)" }).fill(if c_mode == CompareMode::Heatmap { active_color } else { Color32::TRANSPARENT })).clicked() {
-            app.view_mut().mode = CompareMode::Heatmap;
-        }
-        if ui.add(egui::Button::new(match app.view().lang { Language::Es => "Lado a Lado (L)", Language::En => "Side-by-Side (L)", Language::Quenya => "Ara (L)" }).fill(if c_mode == CompareMode::SideBySide { active_color } else { Color32::TRANSPARENT })).clicked() {
-            app.view_mut().mode = CompareMode::SideBySide;
-        }
+        mode_btn!(match app.view().lang { Language::Es => "Solo A", Language::En => "A Only", Language::Quenya => "Erya A" },
+            is_a, { app.view_mut().mode = CompareMode::SplitScreen; app.view_mut().split_pos = 1.0; });
+        mode_btn!(match app.view().lang { Language::Es => "Solo B", Language::En => "B Only", Language::Quenya => "Erya B" },
+            is_b, { app.view_mut().mode = CompareMode::SplitScreen; app.view_mut().split_pos = 0.0; });
+        mode_btn!(match app.view().lang { Language::Es => "Cortina", Language::En => "Split", Language::Quenya => "Hyanda" },
+            is_split, { app.view_mut().mode = CompareMode::SplitScreen; if is_a || is_b { app.view_mut().split_pos = 0.5; } });
+        mode_btn!(match app.view().lang { Language::Es => "Diferencia", Language::En => "Diff", Language::Quenya => "Winya" },
+            c_mode == CompareMode::AbsDiff, { app.view_mut().mode = CompareMode::AbsDiff; });
+        mode_btn!(match app.view().lang { Language::Es => "Mapa Calor", Language::En => "Heatmap", Language::Quenya => "Úrë" },
+            c_mode == CompareMode::Heatmap, { app.view_mut().mode = CompareMode::Heatmap; });
+        mode_btn!(match app.view().lang { Language::Es => "Lado a Lado", Language::En => "Side×Side", Language::Quenya => "Ara" },
+            c_mode == CompareMode::SideBySide, { app.view_mut().mode = CompareMode::SideBySide; });
 
         ui.separator();
 
-        // ── Mode-specific sliders ───────────────────────────────────────
+        // Contextual slider depending on mode
         match app.view().mode {
             CompareMode::SplitScreen => {
-                ui.label(match app.view().lang { Language::Es => "Ajuste:", Language::En => "Split:", Language::Quenya => "Hya:" });
+                ui.label(match app.view().lang { Language::Es => "Cortina:", Language::En => "Split:", Language::Quenya => "Hya:" });
                 let mut sp = app.view().split_pos;
-                if ui.add(egui::Slider::new(&mut sp, 0.0f32..=1.0).step_by(0.01)).changed() {
+                if ui.add(egui::Slider::new(&mut sp, 0.0f32..=1.0).step_by(0.01).fixed_decimals(2)).changed() {
                     app.view_mut().split_pos = sp;
                 }
             }
-            CompareMode::Heatmap => {
-                ui.label(match app.view().lang { Language::Es => "Amplificador:", Language::En => "Amplifier:", Language::Quenya => "Púta:" });
-                let mut amp = app.view().amplifier;
-                if ui
-                    .add(
-                        egui::Slider::new(&mut amp, 1.0f32..=50.0)
-                            .step_by(0.5)
-                            .suffix("×"),
-                    )
-                    .changed()
-                {
-                    app.view_mut().amplifier = amp;
-                }
-            }
-            CompareMode::AbsDiff => {
-                ui.label(match app.view().lang { Language::Es => "Medición Diferencia:", Language::En => "Difference Measure:", Language::Quenya => "Winya Nótë:" });
-                ui.horizontal(|ui| {
-                    let mut d_mode = app.view().diff_mode;
-                    if ui.radio_value(&mut d_mode, crate::types::DiffMode::LegacyAbs, "Legacy").changed() {
-                        app.view_mut().diff_mode = d_mode;
-                    }
-                    if ui.radio_value(&mut d_mode, crate::types::DiffMode::AbsLinear, "Linear").changed() {
-                        app.view_mut().diff_mode = d_mode;
-                    }
-                    if ui.radio_value(&mut d_mode, crate::types::DiffMode::AbsSqrt, "Sqrt").changed() {
-                        app.view_mut().diff_mode = d_mode;
-                    }
-                    if ui.radio_value(&mut d_mode, crate::types::DiffMode::SignedDiverging, "Signed").changed() {
-                        app.view_mut().diff_mode = d_mode;
-                    }
-                });
-
-                ui.label(match app.view().lang { Language::Es => "Amplificador:", Language::En => "Amplifier:", Language::Quenya => "Púta:" });
+            CompareMode::Heatmap | CompareMode::AbsDiff => {
+                ui.label(match app.view().lang { Language::Es => "Amp:", Language::En => "Amp:", Language::Quenya => "Púta:" });
                 let mut amp = app.view().amplifier;
                 if ui.add(egui::Slider::new(&mut amp, 1.0f32..=50.0).step_by(0.5).suffix("×")).changed() {
                     app.view_mut().amplifier = amp;
+                }
+                if app.view().mode == CompareMode::AbsDiff {
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        let mut d_mode = app.view().diff_mode;
+                        if ui.radio_value(&mut d_mode, crate::types::DiffMode::LegacyAbs, "Legacy").changed() { app.view_mut().diff_mode = d_mode; }
+                        if ui.radio_value(&mut d_mode, crate::types::DiffMode::AbsLinear, "Linear").changed() { app.view_mut().diff_mode = d_mode; }
+                        if ui.radio_value(&mut d_mode, crate::types::DiffMode::AbsSqrt, "Sqrt").changed()    { app.view_mut().diff_mode = d_mode; }
+                        if ui.radio_value(&mut d_mode, crate::types::DiffMode::SignedDiverging, "Signed").changed() { app.view_mut().diff_mode = d_mode; }
+                    });
                 }
             }
             CompareMode::SideBySide => {
-                ui.label(match app.view().lang { Language::Es => "Modo Lado a Lado (Diferencial)", Language::En => "Side-by-Side Mode (Diff)", Language::Quenya => "Ara (Winya)" });
-                ui.horizontal_wrapped(|ui| {
-                    let mut d_mode = app.view().diff_mode;
-                    if ui.radio_value(&mut d_mode, crate::types::DiffMode::LegacyAbs, "Legacy").changed() {
-                        app.view_mut().diff_mode = d_mode;
-                    }
-                    if ui.radio_value(&mut d_mode, crate::types::DiffMode::AbsLinear, "Linear").changed() {
-                        app.view_mut().diff_mode = d_mode;
-                    }
-                    if ui.radio_value(&mut d_mode, crate::types::DiffMode::AbsSqrt, "Sqrt").changed() {
-                        app.view_mut().diff_mode = d_mode;
-                    }
-                    if ui.radio_value(&mut d_mode, crate::types::DiffMode::SignedDiverging, "Signed").changed() {
-                        app.view_mut().diff_mode = d_mode;
-                    }
-                    if ui.radio_value(&mut d_mode, crate::types::DiffMode::None, match app.view().lang { Language::Es => "Sin Filtro", Language::En => "No Filter", Language::Quenya => "Munca U-winya" }).changed() {
-                        app.view_mut().diff_mode = d_mode;
-                    }
-                });
-
-                ui.label(match app.view().lang { Language::Es => "Amplificador Diferencial:", Language::En => "Differential Amplifier:", Language::Quenya => "Winya Púta:" });
+                ui.label(match app.view().lang { Language::Es => "Amp:", Language::En => "Amp:", Language::Quenya => "Púta:" });
                 let mut amp = app.view().amplifier;
                 if ui.add(egui::Slider::new(&mut amp, 1.0f32..=50.0).step_by(0.5).suffix("×")).changed() {
                     app.view_mut().amplifier = amp;
                 }
+                ui.separator();
+                ui.horizontal(|ui| {
+                    let mut d_mode = app.view().diff_mode;
+                    if ui.radio_value(&mut d_mode, crate::types::DiffMode::LegacyAbs, "Legacy").changed()    { app.view_mut().diff_mode = d_mode; }
+                    if ui.radio_value(&mut d_mode, crate::types::DiffMode::AbsLinear, "Linear").changed()    { app.view_mut().diff_mode = d_mode; }
+                    if ui.radio_value(&mut d_mode, crate::types::DiffMode::AbsSqrt, "Sqrt").changed()        { app.view_mut().diff_mode = d_mode; }
+                    if ui.radio_value(&mut d_mode, crate::types::DiffMode::SignedDiverging, "Signed").changed() { app.view_mut().diff_mode = d_mode; }
+                    if ui.radio_value(&mut d_mode, crate::types::DiffMode::None, match app.view().lang {
+                        Language::Es => "Sin Filtro", Language::En => "No Filter", Language::Quenya => "Munca U-winya",
+                    }).changed() { app.view_mut().diff_mode = d_mode; }
+                });
             }
         }
 
-        ui.separator();
-
-        // ── Zoom reset ──────────────────────────────────────────────────
+        // Zoom reset button (only visible when zoomed in/out)
         let zoom = app.view().zoom;
-        if zoom != 1.0 {
-            let rs_text = match app.view().lang { Language::Es => "Reiniciar", Language::En => "Reset", Language::Quenya => "En-panya" };
-            let rs_tip = match app.view().lang { Language::Es => "Doble clic en imagen para reiniciar", Language::En => "Double-click canvas to reset", Language::Quenya => "Ata-clickë mí cén en-panya" };
-            if ui
-                .button(format!("🔍 {:.1}× — {}", zoom, rs_text))
-                .on_hover_text(rs_tip)
-                .clicked()
+        if (zoom - 1.0).abs() > 0.01 {
+            ui.separator();
+            if ui.button(format!("🔍 {:.1}×", zoom))
+                .on_hover_text(match app.view().lang {
+                    Language::Es => "Reiniciar zoom (doble clic en imagen)",
+                    Language::En => "Reset zoom (double-click canvas)",
+                    Language::Quenya => "En-panya zoom",
+                }).clicked()
             {
                 app.view_mut().zoom  = 1.0;
                 app.view_mut().pan_u = 0.0;
                 app.view_mut().pan_v = 0.0;
             }
         }
-
-        ui.separator();
-
-        ui.label(match app.view().lang { Language::Es => "Fondo:", Language::En => "Canvas:", Language::Quenya => "Talan:" });
-        let mut bg_col = app.view().canvas_bg_color;
-        if ui.color_edit_button_rgb(&mut bg_col).changed() {
-            app.view_mut().canvas_bg_color = bg_col;
-        } else {
-            ui.label(RichText::new("🔍 1.0×").weak());
-        }
     });
 }
 
 fn short_name(path: &str) -> String {
-    std::path::Path::new(path)
-        .file_name()
+    // Show only the file stem (no extension) truncated to 18 chars for compactness
+    let name = std::path::Path::new(path)
+        .file_stem()
         .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| path.to_owned())
+        .unwrap_or_else(|| path.to_owned());
+    if name.len() > 18 { format!("{}…", &name[..18]) } else { name }
 }
 
 pub fn show_audio_panel(ui: &mut Ui, app: &mut DiffPlayerApp) {
-    let _is_es = app.view().lang == Language::Es;
-
     ui.vertical_centered(|ui| {
         ui.heading("Audio");
         ui.separator();
-        
         ui.add_space(10.0);
-        
+
         ui.label(RichText::new("A").color(Color32::from_rgb(100, 200, 120)).strong());
-        
         let mut mute_a = app.view().mute_a;
         if ui.button(if mute_a { "🔇" } else { "🔊" }).clicked() {
             mute_a = !mute_a;
             app.view_mut().mute_a = mute_a;
         }
-        
         ui.add_space(5.0);
-        
         let mut vol_a = app.view().vol_a;
         if ui.add(egui::Slider::new(&mut vol_a, 0.0..=2.0).vertical().show_value(false)).changed() {
             app.view_mut().vol_a = vol_a;
         }
-        
+
         ui.add_space(20.0);
         ui.separator();
         ui.add_space(10.0);
-        
+
         ui.label(RichText::new("B").color(Color32::from_rgb(100, 160, 240)).strong());
-        
         let mut mute_b = app.view().mute_b;
         if ui.button(if mute_b { "🔇" } else { "🔊" }).clicked() {
             mute_b = !mute_b;
             app.view_mut().mute_b = mute_b;
         }
-        
         ui.add_space(5.0);
-        
         let mut vol_b = app.view().vol_b;
         if ui.add(egui::Slider::new(&mut vol_b, 0.0..=2.0).vertical().show_value(false)).changed() {
             app.view_mut().vol_b = vol_b;

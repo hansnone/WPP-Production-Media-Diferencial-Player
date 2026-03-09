@@ -96,6 +96,9 @@ pub struct DiffPlayerApp {
     drag_start: Option<(egui::Pos2, f32, f32)>, // pos, pan_u, pan_v at drag start
     dragging_split: bool,
 
+    /// Last known pointer position while OS files are being dragged over the window
+    drag_drop_hover_pos: Option<egui::Pos2>,
+
     _audio_stream: Option<OutputStream>,
     _audio_handle: Option<OutputStreamHandle>,
     sink_a: Option<Sink>,
@@ -136,6 +139,7 @@ impl DiffPlayerApp {
             renderer,
             drag_start: None,
             dragging_split: false,
+            drag_drop_hover_pos: None,
             _audio_stream: audio_stream,
             _audio_handle: audio_handle,
             sink_a,
@@ -156,7 +160,11 @@ impl DiffPlayerApp {
         };
 
         let path_str = path.to_string_lossy().to_string();
+        self.open_video_from_path(path_str, chan);
+    }
 
+    /// Load a video from a filesystem path into the given channel, replacing any existing video.
+    pub fn open_video_from_path(&mut self, path_str: String, chan: Channel) {
         match decoder::spawn_decoder(&path_str) {
             Ok((cmd_tx, frame_rx, audio_rx, meta)) => {
                 let handle = DecoderHandle {
@@ -547,13 +555,9 @@ impl eframe::App for DiffPlayerApp {
 
         // ── UI Overlay conditionally rendered ───────────────────────────────
         if self.view.show_hud {
-            // ── Top menu bar & Toolbar ──────────────────────────────────────────
+            // ── Menu bar (contains all controls inline) ─────────────────────────
             egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
                 crate::ui::controls::show_menu_bar(ui, self);
-            });
-            
-            egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
-                crate::ui::controls::show_toolbar(ui, self);
             });
 
             // ── Info / metadata panel (left side) ──────────────────────────────
@@ -732,6 +736,68 @@ fn show_canvas(ui: &mut egui::Ui, app: &mut DiffPlayerApp, _frame: &mut eframe::
         RenderCallback { renderer: renderer_clone },
     ));
 
+    // -- OS file drag-and-drop handling ------------------------------------
+    let hovered_files = ui.ctx().input(|i| i.raw.hovered_files.clone());
+    let dropped_files = ui.ctx().input(|i| i.raw.dropped_files.clone());
+
+    // IMPORTANT: Handle the actual drop FIRST, before we potentially clear
+    // drag_drop_hover_pos in the else branch below. On the drop frame,
+    // hovered_files is already empty but drag_drop_hover_pos still holds
+    // the last valid cursor position from the previous frame.
+    if !dropped_files.is_empty() {
+        let mid_x = available.center().x;
+        // drag_drop_hover_pos holds last frame's cursor x — use it
+        let hover_x = app.drag_drop_hover_pos
+            .or_else(|| ui.ctx().pointer_hover_pos())
+            .unwrap_or(available.center()).x;
+        let target_chan = if hover_x < mid_x {
+            crate::types::Channel::A
+        } else {
+            crate::types::Channel::B
+        };
+
+        for file in &dropped_files {
+            if let Some(path) = &file.path {
+                let path_str = path.to_string_lossy().to_string();
+                app.open_video_from_path(path_str, target_chan);
+                break;
+            }
+        }
+        app.drag_drop_hover_pos = None;
+    } else if !hovered_files.is_empty() {
+        // Files are being dragged over — update position and draw overlay
+        if let Some(ptr) = ui.ctx().pointer_hover_pos() {
+            app.drag_drop_hover_pos = Some(ptr);
+        }
+
+        let mid_x = available.center().x;
+        let hover_x = app.drag_drop_hover_pos.map(|p| p.x).unwrap_or(mid_x);
+        let targeting_a = hover_x < mid_x;
+
+        let (a_alpha, b_alpha) = if targeting_a { (80u8, 30u8) } else { (30u8, 80u8) };
+
+        let left_rect  = egui::Rect::from_min_max(available.min, egui::pos2(mid_x, available.max.y));
+        let right_rect = egui::Rect::from_min_max(egui::pos2(mid_x, available.min.y), available.max);
+
+        ui.painter().rect_filled(left_rect,  0.0, egui::Color32::from_rgba_premultiplied(80, 180, 100, a_alpha));
+        ui.painter().rect_filled(right_rect, 0.0, egui::Color32::from_rgba_premultiplied(80, 130, 220, b_alpha));
+
+        let is_es = app.view.lang == Language::Es;
+        let label_a = if is_es { "Soltar aquí → VIDEO A" } else { "Drop here → VIDEO A" };
+        let label_b = if is_es { "Soltar aquí → VIDEO B" } else { "Drop here → VIDEO B" };
+        ui.painter().text(left_rect.center(),  egui::Align2::CENTER_CENTER, label_a,
+            egui::FontId::proportional(22.0), egui::Color32::from_rgba_premultiplied(220, 255, 220, 230));
+        ui.painter().text(right_rect.center(), egui::Align2::CENTER_CENTER, label_b,
+            egui::FontId::proportional(22.0), egui::Color32::from_rgba_premultiplied(200, 220, 255, 230));
+        ui.painter().vline(mid_x, available.y_range(),
+            egui::Stroke::new(2.0, egui::Color32::from_rgba_premultiplied(255, 255, 255, 120)));
+
+        ui.ctx().request_repaint();
+    } else {
+        // Nothing dragged — clear stored position
+        app.drag_drop_hover_pos = None;
+    }
+
     // -- Overlay: "No video" message when nothing is loaded ----------------
     let has_a = app.decoder_a.is_some();
     let has_b = app.decoder_b.is_some();
@@ -843,6 +909,8 @@ impl DiffPlayerApp {
     pub fn decoder_b_path(&self) -> Option<&str> { self.decoder_b.as_ref().map(|d| d.path.as_str()) }
     pub fn open_video_a(&mut self) { self.open_video(Channel::A); }
     pub fn open_video_b(&mut self) { self.open_video(Channel::B); }
+    pub fn open_video_a_from_path(&mut self, path: String) { self.open_video_from_path(path, Channel::A); }
+    pub fn open_video_b_from_path(&mut self, path: String) { self.open_video_from_path(path, Channel::B); }
     pub fn do_play(&mut self)         { self.play_both(); }
     pub fn do_pause(&mut self)        { self.pause_both(); }
     pub fn do_step_fwd(&mut self) { 
