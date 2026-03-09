@@ -561,6 +561,7 @@ impl eframe::App for DiffPlayerApp {
                 .resizable(true)
                 .default_width(260.0)
                 .min_width(200.0)
+                .max_width(340.0)
                 .show(ctx, |ui| {
                     crate::ui::info_panel::show(ui, self);
                 });
@@ -671,6 +672,8 @@ fn show_canvas(ui: &mut egui::Ui, app: &mut DiffPlayerApp, _frame: &mut eframe::
     }
 
     // -- Drag to pan OR drag split line (Available in all modes) -------------
+    // Pan is only active when zoomed in (zoom > 1.0). At fit-to-frame only the
+    // split divider can be dragged.
     if response.drag_started() {
         let pos = response.interact_pointer_pos().unwrap_or_default();
         let split_x = available.left() + app.view.split_pos * available.width();
@@ -679,7 +682,10 @@ fn show_canvas(ui: &mut egui::Ui, app: &mut DiffPlayerApp, _frame: &mut eframe::
             app.dragging_split = true;
         } else {
             app.dragging_split = false;
-            app.drag_start = Some((pos, app.view.pan_u, app.view.pan_v));
+            // Only allow panning when zoomed in
+            if app.view.zoom > 1.0 {
+                app.drag_start = Some((pos, app.view.pan_u, app.view.pan_v));
+            }
         }
     }
 

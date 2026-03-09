@@ -147,7 +147,6 @@ pub fn show_toolbar(ui: &mut Ui, app: &mut DiffPlayerApp) {
     let _is_es = app.view().lang == Language::Es;
 
     ui.horizontal_wrapped(|ui| {
-        ui.set_height(42.0);
 
         // ── File open buttons ───────────────────────────────────────────
         let has_a = app.decoder_a_path().is_some();

@@ -16,12 +16,35 @@ fn main() -> anyhow::Result<()> {
     // Detect system dark/light mode
     let follow_dark = matches!(dark_light::detect(), dark_light::Mode::Dark);
 
+    // Load app icon from embedded bytes (compiled into binary)
+    let icon_data = {
+        let icon_bytes = include_bytes!("../assets/Icon-iOS-Default-1024x1024@1x.png");
+        match image::load_from_memory(icon_bytes) {
+            Ok(img) => {
+                let rgba = img.into_rgba8();
+                let (w, h) = rgba.dimensions();
+                let pixels = rgba.into_raw();
+                Some(egui::IconData { rgba: pixels, width: w, height: h })
+            }
+            Err(e) => {
+                log::warn!("Could not load app icon: {e}");
+                None
+            }
+        }
+    };
+
+    let mut viewport_builder = egui::ViewportBuilder::default()
+        .with_title("WPP Production Media Diferencial Player")
+        .with_inner_size([1600.0, 900.0])
+        .with_min_inner_size([900.0, 560.0]);
+
+    if let Some(icon) = icon_data {
+        viewport_builder = viewport_builder.with_icon(std::sync::Arc::new(icon));
+    }
+
     let mut native_options = eframe::NativeOptions {
-        renderer: eframe::Renderer::Wgpu, // Re-enable Wgpu since xcap is now used for screenshots
-        viewport: egui::ViewportBuilder::default()
-            .with_title("WPP Production Media Diferencial Player")
-            .with_inner_size([1600.0, 900.0])
-            .with_min_inner_size([900.0, 560.0]),
+        renderer: eframe::Renderer::Wgpu,
+        viewport: viewport_builder,
         follow_system_theme: true,
         default_theme: if follow_dark { eframe::Theme::Dark } else { eframe::Theme::Light },
         centered: true,

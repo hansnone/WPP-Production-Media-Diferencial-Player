@@ -49,7 +49,9 @@ if [ "$OS" = "Darwin" ]; then
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundleVersion</key>
-    <string>1.0.0</string>
+    <string>1.2.5</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.2.5</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>NSHighResolutionCapable</key>
