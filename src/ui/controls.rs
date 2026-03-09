@@ -197,19 +197,21 @@ pub fn show_menu_bar(ui: &mut Ui, app: &mut DiffPlayerApp) {
                 Language::Es => "B…".to_owned(), Language::En => "B…".to_owned(), Language::Quenya => "B…".to_owned(),
             });
 
+        let a_tooltip = app.decoder_a_path().map(|p| p.to_owned()).unwrap_or_else(|| match app.view().lang {
+            Language::Es => "Abrir Vídeo A".to_owned(), Language::En => "Open Video A".to_owned(), Language::Quenya => "Panya A".to_owned(),
+        });
         if ui.add(egui::Button::new(
             RichText::new(format!("▶A {a_label}"))
                 .color(if has_a { Color32::from_rgb(100, 200, 120) } else { Color32::LIGHT_GRAY }),
-        )).on_hover_text(match app.view().lang {
-            Language::Es => "Abrir Vídeo A", Language::En => "Open Video A", Language::Quenya => "Panya A",
-        }).clicked() { app.open_video_a(); }
+        )).on_hover_text(a_tooltip).clicked() { app.open_video_a(); }
 
+        let b_tooltip = app.decoder_b_path().map(|p| p.to_owned()).unwrap_or_else(|| match app.view().lang {
+            Language::Es => "Abrir Vídeo B".to_owned(), Language::En => "Open Video B".to_owned(), Language::Quenya => "Panya B".to_owned(),
+        });
         if ui.add(egui::Button::new(
             RichText::new(format!("▶B {b_label}"))
                 .color(if has_b { Color32::from_rgb(100, 160, 240) } else { Color32::LIGHT_GRAY }),
-        )).on_hover_text(match app.view().lang {
-            Language::Es => "Abrir Vídeo B", Language::En => "Open Video B", Language::Quenya => "Panya B",
-        }).clicked() { app.open_video_b(); }
+        )).on_hover_text(b_tooltip).clicked() { app.open_video_b(); }
 
         ui.separator();
 

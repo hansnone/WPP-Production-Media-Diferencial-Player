@@ -12,11 +12,13 @@ use crate::types::{
 use rodio::{OutputStream, OutputStreamHandle, Sink};
 use std::path::PathBuf;
 
+use serde::{Serialize, Deserialize};
+
 // ---------------------------------------------------------------------------
 //  View state — zoom / pan / mode / sliders
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ViewState {
     pub mode: CompareMode,
     pub diff_mode: DiffMode,
@@ -32,11 +34,48 @@ pub struct ViewState {
     pub canvas_bg_color: [f32; 3],
     pub show_clean_feed_window: bool,
     /// Canvas rect in egui screen-space (for coordinate transform)
+    #[serde(skip, default = "default_rect")]
     pub canvas_rect: egui::Rect,
     pub mute_a: bool,
     pub mute_b: bool,
     pub vol_a: f32,
     pub vol_b: f32,
+}
+
+impl ViewState {
+    pub fn config_path() -> Option<PathBuf> {
+        directories::ProjectDirs::from("com", "diffplayerqc", "diffplayerqc")
+            .map(|proj| proj.config_dir().join("config.json"))
+    }
+
+    pub fn load() -> Self {
+        if let Some(path) = Self::config_path() {
+            if let Ok(content) = std::fs::read_to_string(path) {
+                if let Ok(mut loaded) = serde_json::from_str::<Self>(&content) {
+                    // Ensure screenshot_dir exists or fall back to desktop
+                    if let Some(dir) = &loaded.screenshot_dir {
+                        if !dir.exists() {
+                            loaded.screenshot_dir = directories::UserDirs::new()
+                                .and_then(|d| d.desktop_dir().map(|p| p.to_path_buf()));
+                        }
+                    }
+                    return loaded;
+                }
+            }
+        }
+        Self::default()
+    }
+
+    pub fn save(&self) {
+        if let Some(path) = Self::config_path() {
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            if let Ok(content) = serde_json::to_string_pretty(self) {
+                let _ = std::fs::write(path, content);
+            }
+        }
+    }
 }
 
 impl Default for ViewState {
@@ -131,10 +170,13 @@ impl DiffPlayerApp {
         if let Some(s) = &sink_a { s.set_volume(0.0); }
         if let Some(s) = &sink_b { s.set_volume(0.0); }
 
+        let view = ViewState::load();
+        crate::ui::theme::apply_theme(&cc.egui_ctx, view.theme);
+
         Self {
             decoder_a: None,
             decoder_b: None,
-            view: ViewState::default(),
+            view,
             playback: PlaybackState::default(),
             renderer,
             drag_start: None,
@@ -656,6 +698,10 @@ impl eframe::App for DiffPlayerApp {
             self.view.show_clean_feed_window = show;
         }
     }
+
+    fn save(&mut self, _storage: &mut dyn eframe::Storage) {
+        self.view.save();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -859,6 +905,8 @@ fn show_canvas(ui: &mut egui::Ui, app: &mut DiffPlayerApp, _frame: &mut eframe::
         );
     }
 }
+
+fn default_rect() -> egui::Rect { egui::Rect::NOTHING }
 
 // ---------------------------------------------------------------------------
 //  Font setup

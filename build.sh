@@ -10,6 +10,10 @@ echo -e "\033[1;36m========================================================\033[
 
 echo -e "\n\033[1;33m[1/3] Compilando codigo Rust (Modo Release)...\033[0m"
 
+# Extraer versión de Cargo.toml
+VERSION=$(grep "^version =" Cargo.toml | head -n 1 | cut -d '"' -f 2)
+echo -e "\033[1;32mVersion detectada: $VERSION\033[0m"
+
 # Configuración para macOS con Homebrew y FFmpeg@7
 if [ "$OS" = "Darwin" ]; then
     if brew --prefix ffmpeg@7 >/dev/null 2>&1; then
@@ -25,7 +29,7 @@ cargo build --release
 if [ "$OS" = "Darwin" ]; then
     echo -e "\n\033[1;33m[2/3] Plataforma macOS. Empacando como .app standalone...\033[0m"
     
-    APP_NAME="WPP DiffPlayerQC.app"
+    APP_NAME="WPP DiffPlayerQC v$VERSION.app"
     DIST_DIR="dist/macOS"
     CONTENTS="$DIST_DIR/$APP_NAME/Contents"
     BINS="$CONTENTS/MacOS"
@@ -49,9 +53,9 @@ if [ "$OS" = "Darwin" ]; then
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundleVersion</key>
-    <string>1.2.7</string>
+    <string>$VERSION</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.2.7</string>
+    <string>$VERSION</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>NSHighResolutionCapable</key>
@@ -85,10 +89,9 @@ EOF
         dylibbundler -b -x "$BINS/diffplayerqc" -d "$LIBS/" -p "@executable_path/../Frameworks/"
     fi
     
-    echo -e "\n\033[1;33m[Opcional] Generando Instalador .pkg ...\033[0m"
     pkgbuild --component "$DIST_DIR/$APP_NAME" \
              --install-location /Applications \
-             "$DIST_DIR/WPP_DiffPlayerQC_Installer.pkg" || true
+             "$DIST_DIR/WPP_DiffPlayerQC_Installer_v$VERSION.pkg" || true
              
     echo -e "\n\033[1;32m========================================================\033[0m"
     echo -e "\033[1;32m¡Empaquetado macOS sin dependencias externas completado!\033[0m"
@@ -101,12 +104,12 @@ elif [ "$OS" = "Linux" ]; then
     rm -rf "$DIST_DIR"
     mkdir -p "$DIST_DIR/libs"
     
-    cp target/release/diffplayerqc "$DIST_DIR/wpp-diffplayerqc"
-    chmod +x "$DIST_DIR/wpp-diffplayerqc"
+    cp target/release/diffplayerqc "$DIST_DIR/wpp-diffplayerqc-v$VERSION"
+    chmod +x "$DIST_DIR/wpp-diffplayerqc-v$VERSION"
     
     echo -e "\n\033[1;33m[3/3] Empaquetando dependencias SO (.so)...\033[0m"
     # LDD en unix rastrea librerias. Copiamos las que no son del kernel.
-    ldd "$DIST_DIR/wpp-diffplayerqc" | grep -E "libav|libsw" | awk '{print $3}' | while read -r lib; do
+    ldd "$DIST_DIR/wpp-diffplayerqc-v$VERSION" | grep -E "libav|libsw" | awk '{print $3}' | while read -r lib; do
         if [ -f "$lib" ]; then
             cp "$lib" "$DIST_DIR/libs/"
         fi

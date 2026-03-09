@@ -33,10 +33,14 @@ if ($IsWin) {
     cargo build --release --target x86_64-pc-windows-gnu
 
     if ($LASTEXITCODE -eq 0) {
+        # Extraer versión de Cargo.toml
+        $VERSION = (Select-String -Path "Cargo.toml" -Pattern '^version = "(.*)"').Matches.Groups[1].Value
+        Write-Host "Version detectada: $VERSION" -ForegroundColor Green
+
         Write-Host "Build successful!" -ForegroundColor Green
         
         $RELEASE_DIR = "target\x86_64-pc-windows-gnu\release"
-        $DIST_DIR = "dist\Windows"
+        $DIST_DIR = "dist\Windows_v$VERSION"
         
         Write-Host "`nPreparando carpeta de distribucion portable en $DIST_DIR..." -ForegroundColor Yellow
         
@@ -73,7 +77,7 @@ if ($IsWin) {
         New-Item -ItemType Directory -Force -Path $DIST_DIR | Out-Null
         
         Write-Host "Copiando ejecutable hiper-optimizado..." -ForegroundColor Green
-        Copy-Item "$RELEASE_DIR\diffplayerqc.exe" -Destination "$DIST_DIR\"
+        Copy-Item "$RELEASE_DIR\diffplayerqc.exe" -Destination "$DIST_DIR\diffplayerqc-v$VERSION.exe"
 
         Write-Host "Recopilando dlls dinamicas requeridas desde MSYS2..." -ForegroundColor Yellow
         $LDD_EXE = "C:\msys64\usr\bin\ldd.exe"
@@ -81,7 +85,7 @@ if ($IsWin) {
         if (-Not (Test-Path $LDD_EXE)) {
             Write-Host "Error: No se encontro ldd.exe en MSYS2. Saltando copiado de dlls." -ForegroundColor Red
         } else {
-            $lddOutput = & $LDD_EXE "$DIST_DIR\diffplayerqc.exe" 2> $null
+            $lddOutput = & $LDD_EXE "$DIST_DIR\diffplayerqc-v$VERSION.exe" 2> $null
             $contadorDll = 0
             
             foreach ($line in $lddOutput) {

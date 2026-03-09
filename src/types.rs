@@ -1,5 +1,7 @@
 // types.rs — Shared data types across all modules
 
+use serde::{Serialize, Deserialize};
+
 /// A decoded video frame ready for GPU upload.
 #[derive(Clone)]
 pub struct VideoFrame {
@@ -57,7 +59,7 @@ pub struct ColorMetadata {
 }
 
 /// Current display mode for the comparison shader.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u32)]
 pub enum CompareMode {
     SplitScreen = 0,
@@ -71,7 +73,7 @@ impl Default for CompareMode {
 }
 
 /// The specific algorithm used when evaluating `CompareMode::AbsDiff`
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u32)]
 pub enum DiffMode {
     LegacyAbs = 0,
@@ -89,7 +91,7 @@ impl Default for DiffMode {
 
 
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Language {
     En,
     Es,
@@ -100,7 +102,7 @@ impl Default for Language {
     fn default() -> Self { Self::Es }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Theme {
     Dark,
     Light,
