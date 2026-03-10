@@ -104,7 +104,7 @@ pub fn show(ui: &mut Ui, app: &mut DiffPlayerApp) {
         if let Some(pos) = interact {
             let t = ((pos.x - track_rect.left()) / track_rect.width()).clamp(0.0, 1.0);
             let seek_secs = t as f64 * duration;
-            app.do_seek(seek_secs);
+            app.do_seek(seek_secs, ui.ctx());
         }
     }
 }

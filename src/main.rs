@@ -13,6 +13,8 @@ fn main() -> anyhow::Result<()> {
         .filter_level(log::LevelFilter::Info)
         .init();
 
+    log::info!("=== DiffPlayerQC Startup ===");
+
     // Detect system dark/light mode
     let follow_dark = matches!(dark_light::detect(), dark_light::Mode::Dark);
 
@@ -42,7 +44,7 @@ fn main() -> anyhow::Result<()> {
         viewport_builder = viewport_builder.with_icon(std::sync::Arc::new(icon));
     }
 
-    let mut native_options = eframe::NativeOptions {
+    let native_options = eframe::NativeOptions {
         renderer: eframe::Renderer::Wgpu,
         viewport: viewport_builder,
         follow_system_theme: true,
@@ -50,18 +52,22 @@ fn main() -> anyhow::Result<()> {
         centered: true,
         ..Default::default()
     };
-    // Use Vulkan, Metal, or GL backends explicitly to avoid unstable DX12 screenshot deadlocks on Windows
-    native_options.wgpu_options.supported_backends = eframe::wgpu::Backends::VULKAN | eframe::wgpu::Backends::METAL | eframe::wgpu::Backends::GL;
 
+    log::info!("Starting eframe application loop...");
     eframe::run_native(
         "WPP Production Media Diferencial Player",
         native_options,
         Box::new(|cc: &CreationContext<'_>| {
+            log::info!("CreationContext initialized, building app...");
             let app = app::DiffPlayerApp::new(cc);
             Box::new(app) as Box<dyn App>
         }),
     )
-    .map_err(|e| anyhow::anyhow!("{e}"))?;
+    .map_err(|e| {
+        log::error!("Eframe execution error: {e}");
+        anyhow::anyhow!("{e}")
+    })?;
 
+    log::info!("Application exited cleanly.");
     Ok(())
 }

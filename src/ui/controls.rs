@@ -17,11 +17,11 @@ pub fn show_menu_bar(ui: &mut Ui, app: &mut DiffPlayerApp) {
         }, |ui| {
             if ui.button(match app.view().lang {
                 Language::Es => "Abrir VÍDEO A…", Language::En => "Open VIDEO A…", Language::Quenya => "Panya VÍDEO A…",
-            }).clicked() { app.open_video_a(); ui.close_menu(); }
+            }).clicked() { app.open_video_a(ui.ctx()); ui.close_menu(); }
 
             if ui.button(match app.view().lang {
                 Language::Es => "Abrir VÍDEO B…", Language::En => "Open VIDEO B…", Language::Quenya => "Panya VÍDEO B…",
-            }).clicked() { app.open_video_b(); ui.close_menu(); }
+            }).clicked() { app.open_video_b(ui.ctx()); ui.close_menu(); }
 
             ui.separator();
             if ui.button(match app.view().lang {
@@ -80,20 +80,20 @@ pub fn show_menu_bar(ui: &mut Ui, app: &mut DiffPlayerApp) {
                 (false, Language::Es) => "Reproducir  (Espacio)",
                 (false, Language::En) => "Play  (Space)",
                 (false, Language::Quenya) => "Lir  (Espacio)",
-            }).clicked() { if is_p { app.do_pause(); } else { app.do_play(); } ui.close_menu(); }
+            }).clicked() { if is_p { app.do_pause(ui.ctx()); } else { app.do_play(ui.ctx()); } ui.close_menu(); }
             if ui.button(match app.view().lang {
                 Language::Es => "Retroceder Frame (Izquierda / Left)", 
                 Language::En => "Step Backward (Left)", 
                 Language::Quenya => "Nánë Frame (Left)",
-            }).clicked() { app.do_step_bck(); ui.close_menu(); }
+            }).clicked() { app.do_step_bck(ui.ctx()); ui.close_menu(); }
             if ui.button(match app.view().lang {
                 Language::Es => "Avanzar Frame (Derecha / Right)", 
                 Language::En => "Step Forward (Right)", 
                 Language::Quenya => "Pónë Frame (Right)",
-            }).clicked() { app.do_step_fwd(); ui.close_menu(); }
+            }).clicked() { app.do_step_fwd(ui.ctx()); ui.close_menu(); }
             if ui.button(match app.view().lang {
                 Language::Es => "Ir al inicio  (Home)", Language::En => "Go to Start  (Home)", Language::Quenya => "Mena Yessë  (Home)",
-            }).clicked() { app.do_seek(0.0); ui.close_menu(); }
+            }).clicked() { app.do_seek(0.0, ui.ctx()); ui.close_menu(); }
         });
 
         ui.menu_button(match app.view().lang {
@@ -101,7 +101,7 @@ pub fn show_menu_bar(ui: &mut Ui, app: &mut DiffPlayerApp) {
         }, |ui| {
             if ui.button(match app.view().lang {
                 Language::Es => "Intercambiar A y B  (S)", Language::En => "Swap A and B  (S)", Language::Quenya => "Quista A ar B  (S)",
-            }).clicked() { app.swap_videos(); ui.close_menu(); }
+            }).clicked() { app.swap_videos(ui.ctx()); ui.close_menu(); }
 
             ui.separator();
 
@@ -207,7 +207,7 @@ pub fn show_menu_bar(ui: &mut Ui, app: &mut DiffPlayerApp) {
         if ui.add(egui::Button::new(
             RichText::new(format!("▶A {a_label}"))
                 .color(if has_a { Color32::from_rgb(100, 200, 120) } else { Color32::LIGHT_GRAY }),
-        )).on_hover_text(a_tooltip).clicked() { app.open_video_a(); }
+        )).on_hover_text(a_tooltip).clicked() { app.open_video_a(ui.ctx()); }
 
         let b_tooltip = app.decoder_b_path().map(|p| p.to_owned()).unwrap_or_else(|| match app.view().lang {
             Language::Es => "Abrir Vídeo B".to_owned(), Language::En => "Open Video B".to_owned(), Language::Quenya => "Panya B".to_owned(),
@@ -215,7 +215,7 @@ pub fn show_menu_bar(ui: &mut Ui, app: &mut DiffPlayerApp) {
         if ui.add(egui::Button::new(
             RichText::new(format!("▶B {b_label}"))
                 .color(if has_b { Color32::from_rgb(100, 160, 240) } else { Color32::LIGHT_GRAY }),
-        )).on_hover_text(b_tooltip).clicked() { app.open_video_b(); }
+        )).on_hover_text(b_tooltip).clicked() { app.open_video_b(ui.ctx()); }
 
         ui.separator();
 
@@ -223,18 +223,18 @@ pub fn show_menu_bar(ui: &mut Ui, app: &mut DiffPlayerApp) {
         let is_playing = app.playback().is_playing;
         if ui.button(RichText::new("|<").size(16.0)).on_hover_text(match app.view().lang {
             Language::Es => "Inicio", Language::En => "Start", Language::Quenya => "Yessë",
-        }).clicked() { app.do_seek(0.0); }
+        }).clicked() { app.do_seek(0.0, ui.ctx()); }
         if ui.button(RichText::new("<<").size(16.0)).on_hover_text(match app.view().lang {
             Language::Es => "Retroceder (Izquierda)", Language::En => "Step back (Left)", Language::Quenya => "Nánë (Left)",
-        }).clicked() { app.do_step_bck(); }
+        }).clicked() { app.do_step_bck(ui.ctx()); }
         if ui.button(RichText::new(if is_playing { "||" } else { ">" }).size(16.0))
             .on_hover_text(match app.view().lang {
                 Language::Es => "Reproducir/Pausar (Espacio)", Language::En => "Play/Pause (Space)", Language::Quenya => "Lir/Talta",
             }).clicked()
-        { if is_playing { app.do_pause(); } else { app.do_play(); } }
+        { if is_playing { app.do_pause(ui.ctx()); } else { app.do_play(ui.ctx()); } }
         if ui.button(RichText::new(">>").size(16.0)).on_hover_text(match app.view().lang {
             Language::Es => "Avanzar (Derecha)", Language::En => "Step fwd (Right)", Language::Quenya => "Pónë (Right)",
-        }).clicked() { app.do_step_fwd(); }
+        }).clicked() { app.do_step_fwd(ui.ctx()); }
 
         ui.separator();
 

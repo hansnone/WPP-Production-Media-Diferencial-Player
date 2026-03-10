@@ -298,16 +298,21 @@ fn decoder_loop(
                     DecoderCommand::Seek(secs) => { pending_seek = Some(secs); }
                     DecoderCommand::Play => { pending_play_state = Some(true); }
                     DecoderCommand::Pause => { pending_play_state = Some(false); }
-                    _ => {
-                        // Execute pending seek and state FIRST before processing step/stop
+                    DecoderCommand::StepForward | DecoderCommand::StepBack => {
+                        // Process pending Seek/Play/Pause before this step
                         if let Some(secs) = pending_seek.take() {
                             handle_cmd(DecoderCommand::Seek(secs), &mut ctx, &frame_tx, &audio_tx, &mut is_playing, &mut current_pts, frame_dur)?;
-                            if !is_playing { pending_frame = None; }
                         }
                         if let Some(play) = pending_play_state.take() {
                             let state_cmd = if play { DecoderCommand::Play } else { DecoderCommand::Pause };
                             handle_cmd(state_cmd, &mut ctx, &frame_tx, &audio_tx, &mut is_playing, &mut current_pts, frame_dur)?;
                         }
+                        handle_cmd(cmd, &mut ctx, &frame_tx, &audio_tx, &mut is_playing, &mut current_pts, frame_dur)?;
+                        if !is_playing { pending_frame = None; }
+                        // Stop draining more commands this cycle to prevent thread-hogging if holding keys
+                        break;
+                    }
+                    _ => {
                         handle_cmd(cmd, &mut ctx, &frame_tx, &audio_tx, &mut is_playing, &mut current_pts, frame_dur)?;
                         if !is_playing { pending_frame = None; }
                     }
@@ -328,6 +333,7 @@ fn decoder_loop(
                     current_pts = secs_to_pts(f.pts, ctx.time_base);
                     pending_frame = Some(f);
                 } else {
+                    log::info!("Decoder EOF or stopped at end of file: '{path}'");
                     is_playing = false; // EOF
                 }
             }
@@ -338,15 +344,20 @@ fn decoder_loop(
                 // But if it's paused we only send it once. 
                 crossbeam_channel::select! {
                     send(frame_tx, f.clone()) -> res => {
-                        if res.is_err() { return Ok(()); } // UI disconnected
+                        if res.is_err() { 
+                            log::warn!("Decoder thread exiting: UI frame channel disconnected");
+                            return Ok(()); 
+                        }
                         // frame sent
                     }
                     recv(cmd_rx) -> msg => {
                         pending_frame = Some(f); // Put it back
                         if let Ok(cmd) = msg {
+                            log::trace!("Decoder received command: {:?}", cmd);
                             handle_cmd(cmd, &mut ctx, &frame_tx, &audio_tx, &mut is_playing, &mut current_pts, frame_dur)?;
                             if !is_playing { pending_frame = None; }
                         } else {
+                            log::warn!("Decoder thread exiting: Command channel disconnected");
                             return Ok(());
                         }
                     }
@@ -355,8 +366,10 @@ fn decoder_loop(
                 // No pending frame (either EOF or paused without a frame). Block on commands.
                 let msg = cmd_rx.recv();
                 if let Ok(cmd) = msg {
+                    log::trace!("Decoder received command (idle): {:?}", cmd);
                     handle_cmd(cmd, &mut ctx, &frame_tx, &audio_tx, &mut is_playing, &mut current_pts, frame_dur)?;
                 } else {
+                    log::warn!("Decoder thread exiting (idle): Command channel disconnected");
                     return Ok(());
                 }
             }
@@ -387,12 +400,15 @@ unsafe fn handle_cmd(
             *current_pts = target;
         }
         DecoderCommand::StepForward => {
-            // For step forward, we decode one immediately and send it
+            // For step forward, we decode one immediately and send it.
+            // Using blocking send() to ensure the decoder and the UI clock stay perfectly in sync.
             let packet = ffi::av_packet_alloc();
             let frame = ffi::av_frame_alloc();
             if let Some(f) = decode_one_frame(ctx, packet, frame, audio_tx)? {
-                *current_pts = secs_to_pts(f.pts, ctx.time_base);
-                let _ = frame_tx.send(f);
+                let frame_pts_raw = secs_to_pts(f.pts, ctx.time_base);
+                if frame_tx.send(f).is_ok() {
+                    *current_pts = frame_pts_raw;
+                }
             }
             ffi::av_packet_free(&mut (packet as *mut _));
             ffi::av_frame_free(&mut (frame as *mut _));
@@ -425,6 +441,8 @@ unsafe fn decode_one_frame(
         let vf = convert_frame(ctx, frame, pts)?;
         ffi::av_frame_unref(frame);
         return Ok(Some(vf));
+    } else if ret != ffi::AVERROR(ffi::EAGAIN) && ret != ffi::AVERROR_EOF {
+        log::warn!("avcodec_receive_frame error code: {}", ret);
     }
 
     // Read packets until we get a frame

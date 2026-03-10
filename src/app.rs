@@ -164,6 +164,9 @@ pub struct DiffPlayerApp {
     /// Error alert state
     error_title: Option<String>,
     error_message: Option<String>,
+
+    /// Keyboard repeat state
+    last_step_time: f64,
 }
 
 impl DiffPlayerApp {
@@ -172,10 +175,13 @@ impl DiffPlayerApp {
         setup_fonts(&cc.egui_ctx);
 
         // --- Create the wgpu VideoRenderer ---------------------------------
-        let render_state = cc
-            .wgpu_render_state
-            .as_ref()
-            .expect("eframe must be running with Wgpu backend");
+        let render_state = match cc.wgpu_render_state.as_ref() {
+            Some(rs) => rs,
+            None => {
+                log::error!("CRITICAL: eframe did not provide Wgpu render state. The app cannot continue.");
+                panic!("Wgpu render state missing"); // Still panic but with explicit log before
+            }
+        };
 
         let target_format = render_state.target_format;
         let renderer = Arc::new(Mutex::new(VideoRenderer::new(
@@ -192,9 +198,12 @@ impl DiffPlayerApp {
         if let Some(s) = &sink_a { s.set_volume(0.0); }
         if let Some(s) = &sink_b { s.set_volume(0.0); }
 
+        log::info!("Loading ViewState...");
         let view = ViewState::load();
+        log::info!("Applying theme...");
         crate::ui::theme::apply_theme(&cc.egui_ctx, view.theme);
 
+        log::info!("App struct construction finished.");
         Self {
             decoder_a: None,
             decoder_b: None,
@@ -210,13 +219,14 @@ impl DiffPlayerApp {
             sink_b,
             error_title: None,
             error_message: None,
+            last_step_time: 0.0,
         }
     }
 
     // -----------------------------------------------------------------------
     //  Open a video file for one channel
     // -----------------------------------------------------------------------
-    fn open_video(&mut self, chan: Channel) {
+    fn open_video(&mut self, chan: Channel, ctx: &egui::Context) {
         let Some(path) = rfd::FileDialog::new()
             .add_filter("Video", &["mp4", "mov", "mxf", "mkv", "avi", "prores", "mts", "mpg", "mpeg", "ts"])
             .add_filter("All files", &["*"])
@@ -226,11 +236,11 @@ impl DiffPlayerApp {
         };
 
         let path_str = path.to_string_lossy().to_string();
-        self.open_video_from_path(path_str, chan);
+        self.open_video_from_path(path_str, chan, ctx);
     }
 
     /// Load a video from a filesystem path into the given channel, replacing any existing video.
-    pub fn open_video_from_path(&mut self, path_str: String, chan: Channel) {
+    pub fn open_video_from_path(&mut self, path_str: String, chan: Channel, ctx: &egui::Context) {
         match decoder::spawn_decoder(&path_str) {
             Ok((cmd_tx, frame_rx, audio_rx, meta)) => {
                 let handle = DecoderHandle {
@@ -251,7 +261,8 @@ impl DiffPlayerApp {
                         }
                         self.playback.duration_a = handle.meta.duration_secs;
                         self.decoder_a = Some(handle);
-                        self.do_seek(0.0);
+                        self.do_seek(0.0, ctx);
+                        // No need for repaint here as do_seek handles it
                     }
                     Channel::B => {
                         if let Some(old) = &self.decoder_b {
@@ -259,7 +270,7 @@ impl DiffPlayerApp {
                         }
                         self.playback.duration_b = handle.meta.duration_secs;
                         self.decoder_b = Some(handle);
-                        self.do_seek(0.0);
+                        self.do_seek(0.0, ctx);
                     }
                 }
             }
@@ -291,6 +302,12 @@ impl DiffPlayerApp {
                 } else {
                     // PLAYING: Only consume frames up to current time
                     if f.pts <= current_pts + 0.005 {
+                        latest_frame = Some(f);
+                    } else if f.pts > current_pts + 2.0 {
+                        // CLOCK RESYNC: If the decoder is way ahead of the UI clock (e.g. fast PC or low FPS), 
+                        // force the UI clock to jump forward to avoid a long "freeze".
+                        current_pts = f.pts;
+                        self.playback.current_pts = f.pts;
                         latest_frame = Some(f);
                     } else {
                         // Future frame: save it and stop draining
@@ -327,7 +344,7 @@ impl DiffPlayerApp {
                     repainted = true;
                     
                     if !is_playing {
-                        if is_a { current_pts = frame.pts; }
+                        current_pts = frame.pts;
                     }
                 } else {
                     // Stale frame in play mode
@@ -348,6 +365,8 @@ impl DiffPlayerApp {
         }
 
         if !is_playing {
+            // When paused, current_pts should track the latest frame shown
+            // from whichever decoder just produced a frame.
             self.playback.current_pts = current_pts;
         }
 
@@ -411,16 +430,17 @@ impl DiffPlayerApp {
     // -----------------------------------------------------------------------
     //  Send seek command to both decoders
     // -----------------------------------------------------------------------
-    fn seek_both(&self, pts: f64) {
+    fn seek_both(&self, pts: f64, ctx: &egui::Context) {
         if let Some(dec) = &self.decoder_a {
             let _ = dec.cmd_tx.send(DecoderCommand::Seek(pts));
         }
         if let Some(dec) = &self.decoder_b {
             let _ = dec.cmd_tx.send(DecoderCommand::Seek(pts));
         }
+        ctx.request_repaint();
     }
 
-    fn play_both(&mut self) {
+    fn play_both(&mut self, ctx: &egui::Context) {
         self.playback.is_playing = true;
         if let Some(s) = &self.sink_a { s.play(); }
         if let Some(s) = &self.sink_b { s.play(); }
@@ -430,9 +450,10 @@ impl DiffPlayerApp {
         if let Some(dec) = &self.decoder_b {
             let _ = dec.cmd_tx.send(DecoderCommand::Play);
         }
+        ctx.request_repaint();
     }
 
-    fn pause_both(&mut self) {
+    fn pause_both(&mut self, ctx: &egui::Context) {
         self.playback.is_playing = false;
         if let Some(s) = &self.sink_a { s.pause(); }
         if let Some(s) = &self.sink_b { s.pause(); }
@@ -442,26 +463,29 @@ impl DiffPlayerApp {
         if let Some(dec) = &self.decoder_b {
             let _ = dec.cmd_tx.send(DecoderCommand::Pause);
         }
+        ctx.request_repaint();
     }
 
-    fn step_forward(&self) {
+    fn step_forward(&self, ctx: &egui::Context) {
         if let Some(dec) = &self.decoder_a {
             let _ = dec.cmd_tx.send(DecoderCommand::StepForward);
         }
         if let Some(dec) = &self.decoder_b {
             let _ = dec.cmd_tx.send(DecoderCommand::StepForward);
         }
+        ctx.request_repaint();
     }
 
-    fn step_back(&self) {
+    fn step_back(&self, ctx: &egui::Context) {
         if let Some(dec) = &self.decoder_a {
             let _ = dec.cmd_tx.send(DecoderCommand::StepBack);
         }
         if let Some(dec) = &self.decoder_b {
             let _ = dec.cmd_tx.send(DecoderCommand::StepBack);
         }
+        ctx.request_repaint();
     }
-    pub fn swap_videos(&mut self) {
+    pub fn swap_videos(&mut self, ctx: &egui::Context) {
         std::mem::swap(&mut self.decoder_a, &mut self.decoder_b);
         std::mem::swap(&mut self.playback.duration_a, &mut self.playback.duration_b);
         std::mem::swap(&mut self.view.mute_a, &mut self.view.mute_b);
@@ -470,11 +494,13 @@ impl DiffPlayerApp {
         // Force rendering buffers to swap next frame
         if let Some(dec) = &mut self.decoder_a { dec.next_frame = dec.frame_rx.try_recv().ok(); }
         if let Some(dec) = &mut self.decoder_b { dec.next_frame = dec.frame_rx.try_recv().ok(); }
+        ctx.request_repaint();
     }
 }
 
 impl eframe::App for DiffPlayerApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        log::debug!("App::update() called");
         if self.playback.is_playing {
             let dt = ctx.input(|i| i.stable_dt).min(0.1); 
             self.playback.current_pts += dt as f64;
@@ -482,7 +508,7 @@ impl eframe::App for DiffPlayerApp {
             let max_duration = self.playback.duration_a.max(self.playback.duration_b);
             if max_duration > 0.0 && self.playback.current_pts >= max_duration {
                 // Loop video when reaching the end
-                self.do_seek(0.0);
+                self.do_seek(0.0, ctx);
             }
 
             ctx.request_repaint(); // Repaint continuously while playing
@@ -537,19 +563,19 @@ impl eframe::App for DiffPlayerApp {
         ctx.input(|i| {
             if i.key_pressed(egui::Key::Space) {
                 if self.playback.is_playing {
-                    self.pause_both();
+                    self.pause_both(ctx);
                 } else {
-                    self.play_both();
+                    self.play_both(ctx);
                 }
             }
             if i.key_pressed(egui::Key::ArrowRight) {
-                self.do_step_fwd();
+                self.do_step_fwd(ctx);
             }
             if i.key_pressed(egui::Key::ArrowLeft) {
-                self.do_step_bck();
+                self.do_step_bck(ctx);
             }
             if i.key_pressed(egui::Key::Home) {
-                self.do_seek(0.0);
+                self.do_seek(0.0, ctx);
             }
             if i.key_pressed(egui::Key::Y) {
                 self.view.mode = match self.view.mode {
@@ -625,7 +651,30 @@ impl eframe::App for DiffPlayerApp {
                 self.view.pan_u = 0.0;
                 self.view.pan_v = 0.0;
             }
-            if i.key_pressed(egui::Key::S) { self.swap_videos(); }
+            if i.key_pressed(egui::Key::S) { self.swap_videos(ctx); }
+
+            // ── Precise continuous frame stepping (Keyboard Repeat) ─────────
+            let now = ctx.input(|i| i.time);
+            let repeat_delay = 0.25; // 250ms initial delay
+            let repeat_interval = 0.05; // 50ms interval (20 fps)
+
+            if i.key_down(egui::Key::ArrowRight) {
+                if i.key_pressed(egui::Key::ArrowRight) || (now - self.last_step_time) > repeat_interval {
+                    if i.key_pressed(egui::Key::ArrowRight) || (now - self.last_step_time) > repeat_delay || self.last_step_time > 0.0 {
+                         self.do_step_fwd(ctx);
+                         self.last_step_time = now;
+                    }
+                }
+            } else if i.key_down(egui::Key::ArrowLeft) {
+                if i.key_pressed(egui::Key::ArrowLeft) || (now - self.last_step_time) > repeat_interval {
+                    if i.key_pressed(egui::Key::ArrowLeft) || (now - self.last_step_time) > repeat_delay || self.last_step_time > 0.0 {
+                        self.do_step_bck(ctx);
+                        self.last_step_time = now;
+                    }
+                }
+            } else {
+                self.last_step_time = 0.0;
+            }
         });
 
         // ── UI Overlay conditionally rendered ───────────────────────────────
@@ -881,8 +930,8 @@ fn show_canvas(ui: &mut egui::Ui, app: &mut DiffPlayerApp, _frame: &mut eframe::
             app.error_message = Some("Solo puedes arrastrar un máximo de 2 videos a la vez.".to_string());
         } else if valid_paths.len() == 2 {
             valid_paths.sort(); // A goes to Slot A, B goes to Slot B alphabetically
-            app.open_video_from_path(valid_paths[0].clone(), crate::types::Channel::A);
-            app.open_video_from_path(valid_paths[1].clone(), crate::types::Channel::B);
+            app.open_video_from_path(valid_paths[0].clone(), crate::types::Channel::A, ui.ctx());
+            app.open_video_from_path(valid_paths[1].clone(), crate::types::Channel::B, ui.ctx());
         } else if !valid_paths.is_empty() {
             let mid_x = available.center().x;
             let hover_x = app.drag_drop_hover_pos
@@ -893,7 +942,7 @@ fn show_canvas(ui: &mut egui::Ui, app: &mut DiffPlayerApp, _frame: &mut eframe::
             } else {
                 crate::types::Channel::B
             };
-            app.open_video_from_path(valid_paths[0].clone(), target_chan);
+            app.open_video_from_path(valid_paths[0].clone(), target_chan, ui.ctx());
         }
 
         app.drag_drop_hover_pos = None;
@@ -1048,21 +1097,21 @@ impl DiffPlayerApp {
     pub fn decoder_b_meta(&self) -> Option<&ColorMetadata> { self.decoder_b.as_ref().map(|d| &d.meta) }
     pub fn decoder_a_path(&self) -> Option<&str> { self.decoder_a.as_ref().map(|d| d.path.as_str()) }
     pub fn decoder_b_path(&self) -> Option<&str> { self.decoder_b.as_ref().map(|d| d.path.as_str()) }
-    pub fn open_video_a(&mut self) { self.open_video(Channel::A); }
-    pub fn open_video_b(&mut self) { self.open_video(Channel::B); }
-    pub fn open_video_a_from_path(&mut self, path: String) { self.open_video_from_path(path, Channel::A); }
-    pub fn open_video_b_from_path(&mut self, path: String) { self.open_video_from_path(path, Channel::B); }
-    pub fn do_play(&mut self)         { self.play_both(); }
-    pub fn do_pause(&mut self)        { self.pause_both(); }
-    pub fn do_step_fwd(&mut self) { 
+    pub fn open_video_a(&mut self, ctx: &egui::Context) { self.open_video(Channel::A, ctx); }
+    pub fn open_video_b(&mut self, ctx: &egui::Context) { self.open_video(Channel::B, ctx); }
+    pub fn open_video_a_from_path(&mut self, path: String, ctx: &egui::Context) { self.open_video_from_path(path, Channel::A, ctx); }
+    pub fn open_video_b_from_path(&mut self, path: String, ctx: &egui::Context) { self.open_video_from_path(path, Channel::B, ctx); }
+    pub fn do_play(&mut self, ctx: &egui::Context)  { self.play_both(ctx); }
+    pub fn do_pause(&mut self, ctx: &egui::Context) { self.pause_both(ctx); }
+    pub fn do_step_fwd(&mut self, ctx: &egui::Context) { 
         if self.playback.is_playing {
-            self.pause_both();
+            self.pause_both(ctx);
         }
-        self.step_forward();
+        self.step_forward(ctx);
     }
-    pub fn do_step_bck(&mut self) { 
+    pub fn do_step_bck(&mut self, ctx: &egui::Context) { 
         if self.playback.is_playing {
-            self.pause_both();
+            self.pause_both(ctx);
         }
         let fps = match (self.decoder_a_meta(), self.decoder_b_meta()) {
             (Some(a), _) if a.fps > 0.0 => a.fps,
@@ -1070,10 +1119,10 @@ impl DiffPlayerApp {
             _ => 25.0,
         };
         let t = (self.playback.current_pts - 1.0 / fps).max(0.0);
-        self.do_seek(t);
+        self.do_seek(t, ctx);
     }
-    pub fn do_seek(&mut self, t: f64) { 
-        self.seek_both(t); 
+    pub fn do_seek(&mut self, t: f64, ctx: &egui::Context) { 
+        self.seek_both(t, ctx); 
         self.playback.current_pts = t; 
         
         // Clear audio sink buffers since we are jumping in time
@@ -1098,7 +1147,8 @@ impl DiffPlayerApp {
 
         // Restore decoder playback state if we were playing. Decoder threads pause automatically on seek.
         if self.playback.is_playing {
-            self.play_both();
+            self.play_both(ctx);
         }
+        ctx.request_repaint();
     }
 }
