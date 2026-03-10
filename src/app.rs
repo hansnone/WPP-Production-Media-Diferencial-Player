@@ -50,8 +50,10 @@ impl ViewState {
 
     pub fn load() -> Self {
         if let Some(path) = Self::config_path() {
-            if let Ok(content) = std::fs::read_to_string(path) {
+            log::info!("Loading config from: {:?}", path);
+            if let Ok(content) = std::fs::read_to_string(&path) {
                 if let Ok(mut loaded) = serde_json::from_str::<Self>(&content) {
+                    log::info!("Config loaded successfully");
                     // Ensure screenshot_dir exists or fall back to desktop
                     if let Some(dir) = &loaded.screenshot_dir {
                         if !dir.exists() {
@@ -60,7 +62,11 @@ impl ViewState {
                         }
                     }
                     return loaded;
+                } else {
+                    log::warn!("Failed to parse config.json, using defaults");
                 }
+            } else {
+                log::info!("No existing config.json found at {:?}, using defaults", path);
             }
         }
         Self::default()
@@ -68,11 +74,23 @@ impl ViewState {
 
     pub fn save(&self) {
         if let Some(path) = Self::config_path() {
+            log::info!("Saving config to: {:?}", path);
             if let Some(parent) = path.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
             if let Ok(content) = serde_json::to_string_pretty(self) {
-                let _ = std::fs::write(path, content);
+                let tmp_path = path.with_extension("json.tmp");
+                if let Err(e) = std::fs::write(&tmp_path, &content) {
+                    log::error!("Failed to write config.json.tmp: {e}");
+                    return;
+                }
+                if let Err(e) = std::fs::rename(&tmp_path, &path) {
+                    log::error!("Failed to rename config.json.tmp to config.json: {e}");
+                } else {
+                    log::info!("Config saved successfully ({} bytes)", content.len());
+                }
+            } else {
+                log::error!("Failed to serialize ViewState to JSON");
             }
         }
     }
@@ -142,6 +160,10 @@ pub struct DiffPlayerApp {
     _audio_handle: Option<OutputStreamHandle>,
     sink_a: Option<Sink>,
     sink_b: Option<Sink>,
+
+    /// Error alert state
+    error_title: Option<String>,
+    error_message: Option<String>,
 }
 
 impl DiffPlayerApp {
@@ -186,6 +208,8 @@ impl DiffPlayerApp {
             _audio_handle: audio_handle,
             sink_a,
             sink_b,
+            error_title: None,
+            error_message: None,
         }
     }
 
@@ -258,18 +282,33 @@ impl DiffPlayerApp {
 
         // Process frames for one decoder
         let mut process_dec = |dec: &mut DecoderHandle, is_a: bool| {
-            if dec.next_frame.is_none() {
-                dec.next_frame = dec.frame_rx.try_recv().ok();
+            // TURBO DRAINING: Consume all available frames in the channel
+            let mut latest_frame = dec.next_frame.take();
+            while let Ok(f) = dec.frame_rx.try_recv() {
+                if !is_playing {
+                    // PAUSED/STEPPING: Just get the absolute latest frame available
+                    latest_frame = Some(f);
+                } else {
+                    // PLAYING: Only consume frames up to current time
+                    if f.pts <= current_pts + 0.005 {
+                        latest_frame = Some(f);
+                    } else {
+                        // Future frame: save it and stop draining
+                        dec.next_frame = Some(f);
+                        break;
+                    }
+                }
             }
 
-            while let Some(frame) = dec.next_frame.take() {
+            if let Some(frame) = latest_frame {
                 // Determine if we should show this specific frame
                 let time_to_show = if is_playing {
                     // When playing: show if frame is in the past or exactly now
                     frame.pts <= current_pts || (frame.pts - current_pts).abs() < 0.005
                 } else {
-                    // When paused: only show if it's a very close match to where we are (seek result)
-                    (frame.pts - current_pts).abs() < 0.04
+                    // When paused: always show the LATEST frame from the channel
+                    // to ensure flow even when holding the step button.
+                    true
                 };
 
                 if time_to_show {
@@ -289,19 +328,13 @@ impl DiffPlayerApp {
                     
                     if !is_playing {
                         if is_a { current_pts = frame.pts; }
-                        break;
                     }
                 } else {
-                    // If this frame is NOT to be shown...
+                    // Stale frame in play mode
                     if frame.pts < current_pts {
-                        // It's a stale frame (e.g. from before a seek that didn't clear the channel)
-                        // Discard it and try to find a better one in the channel.
                         dec.next_frame = dec.frame_rx.try_recv().ok();
-                        continue;
                     } else {
-                        // It's a future frame. Keep it in next_frame and stop draining.
                         dec.next_frame = Some(frame);
-                        break;
                     }
                 }
             }
@@ -697,9 +730,39 @@ impl eframe::App for DiffPlayerApp {
             
             self.view.show_clean_feed_window = show;
         }
+        // ── Error Alert Modal ───────────────────────────────────────────────
+        if let (Some(title), Some(msg)) = (&self.error_title, &self.error_message) {
+            let mut open = true;
+            egui::Window::new(egui::RichText::new(title).color(egui::Color32::from_rgb(255, 100, 100)).strong())
+                .collapsible(false)
+                .resizable(false)
+                .pivot(egui::Align2::CENTER_CENTER)
+                .default_pos(ctx.screen_rect().center())
+                .fixed_size(egui::vec2(400.0, 150.0))
+                .show(ctx, |ui| {
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(15.0);
+                        ui.label(egui::RichText::new(msg).size(15.0));
+                        ui.add_space(25.0);
+                        if ui.button(egui::RichText::new("   OK   ").strong()).clicked() {
+                            open = false;
+                        }
+                        ui.add_space(10.0);
+                    });
+                });
+            if !open {
+                self.error_title = None;
+                self.error_message = None;
+            }
+        }
     }
 
     fn save(&mut self, _storage: &mut dyn eframe::Storage) {
+        self.view.save();
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        log::info!("Application exiting, triggering final save");
         self.view.save();
     }
 }
@@ -791,24 +854,48 @@ fn show_canvas(ui: &mut egui::Ui, app: &mut DiffPlayerApp, _frame: &mut eframe::
     // hovered_files is already empty but drag_drop_hover_pos still holds
     // the last valid cursor position from the previous frame.
     if !dropped_files.is_empty() {
-        let mid_x = available.center().x;
-        // drag_drop_hover_pos holds last frame's cursor x — use it
-        let hover_x = app.drag_drop_hover_pos
-            .or_else(|| ui.ctx().pointer_hover_pos())
-            .unwrap_or(available.center()).x;
-        let target_chan = if hover_x < mid_x {
-            crate::types::Channel::A
-        } else {
-            crate::types::Channel::B
-        };
+        let valid_extensions = ["mp4", "mov", "mxf", "mkv", "avi", "prores", "mts", "mpg", "mpeg", "ts"];
+        
+        let mut valid_paths = Vec::new();
+        let mut invalid_files = Vec::new();
 
         for file in &dropped_files {
             if let Some(path) = &file.path {
-                let path_str = path.to_string_lossy().to_string();
-                app.open_video_from_path(path_str, target_chan);
-                break;
+                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+                if valid_extensions.contains(&ext.as_str()) {
+                    valid_paths.push(path.to_string_lossy().to_string());
+                } else {
+                    invalid_files.push(path.file_name().unwrap_or_default().to_string_lossy().to_string());
+                }
             }
         }
+
+        if !invalid_files.is_empty() {
+            app.error_title = Some("Formato no soportado".to_string());
+            app.error_message = Some(format!(
+                "Los siguientes archivos no son formatos soportados:\n{}",
+                invalid_files.join(", ")
+            ));
+        } else if valid_paths.len() > 2 {
+            app.error_title = Some("Máximo 2 videos".to_string());
+            app.error_message = Some("Solo puedes arrastrar un máximo de 2 videos a la vez.".to_string());
+        } else if valid_paths.len() == 2 {
+            valid_paths.sort(); // A goes to Slot A, B goes to Slot B alphabetically
+            app.open_video_from_path(valid_paths[0].clone(), crate::types::Channel::A);
+            app.open_video_from_path(valid_paths[1].clone(), crate::types::Channel::B);
+        } else if !valid_paths.is_empty() {
+            let mid_x = available.center().x;
+            let hover_x = app.drag_drop_hover_pos
+                .or_else(|| ui.ctx().pointer_hover_pos())
+                .unwrap_or(available.center()).x;
+            let target_chan = if hover_x < mid_x {
+                crate::types::Channel::A
+            } else {
+                crate::types::Channel::B
+            };
+            app.open_video_from_path(valid_paths[0].clone(), target_chan);
+        }
+
         app.drag_drop_hover_pos = None;
     } else if !hovered_files.is_empty() {
         // Files are being dragged over — update position and draw overlay
@@ -915,25 +1002,31 @@ fn default_rect() -> egui::Rect { egui::Rect::NOTHING }
 fn setup_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
 
-    // Try loading Arial from standard Windows path
-    let arial_path = "C:/Windows/Fonts/arial.ttf";
-    if let Ok(bytes) = std::fs::read(arial_path) {
-        fonts.font_data.insert(
-            "Arial".to_owned(),
-            egui::FontData::from_owned(bytes),
-        );
-        // Insert Arial at the front of the proportional list
-        fonts
-            .families
-            .entry(egui::FontFamily::Proportional)
-            .or_default()
-            .insert(0, "Arial".to_owned());
-        // Also use as the monospace fallback
-        fonts
-            .families
-            .entry(egui::FontFamily::Monospace)
-            .or_default()
-            .push("Arial".to_owned());
+    // List of common font paths for different OSes
+    let font_paths = [
+        "C:/Windows/Fonts/arial.ttf",                   // Windows
+        "/Library/Fonts/Arial.ttf",                      // macOS
+        "/System/Library/Fonts/Supplemental/Arial.ttf",  // macOS Supplemental
+        "/Library/Fonts/Helvetica.ttc",                  // macOS Helvetica fallback
+    ];
+
+    for path in font_paths {
+        if let Ok(bytes) = std::fs::read(path) {
+            fonts.font_data.insert(
+                "DefaultFont".to_owned(),
+                egui::FontData::from_owned(bytes),
+            );
+            // Insert at the front of the proportional list
+            fonts.families.entry(egui::FontFamily::Proportional)
+                .or_default()
+                .insert(0, "DefaultFont".to_owned());
+            // Also use as monospace fallback
+            fonts.families.entry(egui::FontFamily::Monospace)
+                .or_default()
+                .push("DefaultFont".to_owned());
+            log::info!("Loaded font from: {:?}", path);
+            break;
+        }
     }
 
     ctx.set_fonts(fonts);
@@ -962,17 +1055,15 @@ impl DiffPlayerApp {
     pub fn do_play(&mut self)         { self.play_both(); }
     pub fn do_pause(&mut self)        { self.pause_both(); }
     pub fn do_step_fwd(&mut self) { 
-        self.pause_both();
-        let fps = match (self.decoder_a_meta(), self.decoder_b_meta()) {
-            (Some(a), _) if a.fps > 0.0 => a.fps,
-            (_, Some(b)) if b.fps > 0.0 => b.fps,
-            _ => 25.0,
-        };
-        self.playback.current_pts += 1.0 / fps;
+        if self.playback.is_playing {
+            self.pause_both();
+        }
         self.step_forward();
     }
     pub fn do_step_bck(&mut self) { 
-        self.pause_both();
+        if self.playback.is_playing {
+            self.pause_both();
+        }
         let fps = match (self.decoder_a_meta(), self.decoder_b_meta()) {
             (Some(a), _) if a.fps > 0.0 => a.fps,
             (_, Some(b)) if b.fps > 0.0 => b.fps,

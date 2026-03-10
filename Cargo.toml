@@ -1,6 +1,6 @@
 [package]
 name = "diffplayerqc"
-version = "1.2.8"
+version = "1.2.14"
 edition = "2021"
 description = "Frame-accurate differential video QC player"
 authors = ["DiffPlayerQC"]
@@ -11,7 +11,7 @@ name = "diffplayerqc"
 path = "src/main.rs"
 
 [dependencies]
-eframe        = { version = "0.27", features = ["wgpu"] }
+eframe        = { version = "0.27", features = ["wgpu", "persistence"] }
 egui          = "0.27"
 egui-wgpu     = "0.27"
 wgpu          = { version = "0.19", features = ["wgsl"] }

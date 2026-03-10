@@ -26,8 +26,12 @@ WPP Production Media Diferencial Player es un reproductor avanzado multiplatafor
 - **Capturas de Pantalla Nativas:** Usa la tecla 'F' para tomar capturas automáticas del visor (vía `xcap`) y guardarlas directamente al escritorio con una marca de tiempo.
 
 ### Interfaz y Usabilidad (UI/UX)
+- **Persistencia de Configuración:** Recuerda automáticamente el tema, idioma, carpeta de capturas, filtros (amplificador, modo diff) y el color del lienzo entre sesiones.
+- **Guardado Robusto:** Implementa escritura atómica para proteger los archivos de configuración contra cierres inesperados.
+- **Interfaz Adaptativa:** La barra de menú superior contrae sus controles dinámicamente en resoluciones bajas para mantener la visibilidad total de las opciones.
 - **Tema Automático:** Detecta el modo claro/oscuro del sistema operativo automáticamente y se ajusta mediante el framework `egui`.
-- **Soporte Multilingüe:** Interfaz disponible en Inglés y Español.
+- **Soporte Multilingüe:** Interfaz disponible en Inglés, Español y Quenya.
+- **Compatibilidad de Símbolos:** Iconería optimizada para macOS/Darwin mediante carga dinámica de fuentes del sistema y símbolos robustos.
 - **Atajos de Teclado Extendidos:**
   - `Espacio`: Reproducir / Pausar
   - `Flechas Izq/Der`: Avanzar o Retroceder un fotograma
@@ -38,6 +42,11 @@ WPP Production Media Diferencial Player es un reproductor avanzado multiplatafor
   - `3`: Alternar la visualización de la interfaz HUD
   - `4` al `9`: Niveles predeterminados de Zoom
   - `S`: Intercambiar video A con video B
+  - `Arriba/Abajo (Scroll)`: Zoom en la posición del ratón
+- **Arrastrar y Soltar (Drag & Drop) Inteligente:**
+  - Suelta archivos en la mitad izquierda para el Canal A o derecha para el Canal B.
+  - Al soltar **dos vídeos** simultáneamente, se asignan automáticamente a los canales A y B por orden alfabético.
+  - Validación instantánea: aviso visual si se arrastran más de dos archivos o formatos no soportados.
 
 ### Despliegue y Portabilidad
 - **Portabilidad Total:** El sistema de auto-empaquetado distribuye el programa sin requerir dependencias externas del sistema (los binarios de FFmpeg se integran con la aplicación).

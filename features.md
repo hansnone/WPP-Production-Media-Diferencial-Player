@@ -34,12 +34,33 @@ DiffPlayerQC es un reproductor avanzado multiplataforma (Windows, macOS, Linux) 
   - `3`: Alternar la visualización de la interfaz HUD
   - `4` al `9`: Niveles predeterminados de Zoom
   - `S`: Intercambiar video A con video B
+  
+## 💾 Persistencia y Configuración
+- **Guardado Automático:** La aplicación recuerda tus preferencias (tema, idioma, carpeta de capturas, filtros y color de fondo) automáticamente al cerrar.
+- **Robustez Industrial:** Utiliza un sistema de guardado atómico para prevenir la pérdida de datos y fallos en el archivo de configuración.
+- **Gestión de Capturas:** Permite definir una carpeta personalizada para las capturas de pantalla, que se mantiene entre sesiones.
 
 ## 📦 Despliegue y Portabilidad
 - **Portabilidad Total:** El sistema de auto-empaquetado distribuye el programa sin requerir dependencias externas del sistema (los binarios de FFmpeg se integran con la aplicación).
 - **Instaladores Nativos:** Empaquetado en un archivo portátil limpio para Windows y distribuido en formato `.pkg` fácil de instalar para macOS.
 
-## 🆕 Novedades en la Versión 1.2.0
-- Mejoras en el rendimiento de renderizado.
-- Nuevas opciones de configuración para el amplificador de diferencias.
-- Soporte mejorado para formatos de video adicionales.
+## 🆕 Novedades en la Versión 1.2.14
+- **Estabilidad de Reproducción:** Solución garantizada para la reproducción fluida mientras se mantiene el sistema "Turbo Stepping" para búsquedas manuales rápidas.
+
+## 🆕 Novedades en la Versión 1.2.13
+- **Fluidez Máxima (Turbo Draining):** Sistema de visualización ultra-rápido que permite avanzar o retroceder cuadros instantáneamente, incluso manteniendo las teclas pulsadas, sin retrasos ni bloqueos.
+- **Eficiencia Mecánica:** Procesamiento de fotogramas optimizado para minimizar el uso de CPU/GPU durante búsquedas rápidas.
+
+## 🆕 Novedades en la Versión 1.2.12
+- **Línea de Tiempo Fluida:** Corrección crítica en el sistema de avance cuadro a cuadro que evitaba la congelación de la imagen al realizar búsquedas rápidas pulsando repetidamente los controles.
+- **Sincronización de Reloj Robusta:** Mejorada la lógica de visualización de frames en modo pausado.
+
+## 🆕 Novedades en la Versión 1.2.11
+- **Interfaz Adaptativa:** Controles del menú superior que se contraen automáticamente en resoluciones bajas para garantizar que todas las opciones de filtrado (Signed, Linear, Sqrt) sigan siendo accesibles.
+- **Optimización de Espacio:** Uso de menús desplegables contextuales basados en el ancho disponible de la ventana.
+
+## 🆕 Novedades en la Versión 1.2.10
+- **Compatibilidad Total de Símbolos:** Corrección de la visibilidad de iconos en macOS mediante carga dinámica de fuentes del sistema.
+- **Drag & Drop Inteligente:** Validación de archivos, alertas de formato y auto-asignación alfabética de canales A y B al soltar dos vídeos.
+- **Persistencia Mejorada:** Guardado robusto y soporte nativo para recordar todas las preferencias del usuario.
+- **Alertas Premium:** Nuevo sistema visual de mensajes de error y avisos.

@@ -82,10 +82,14 @@ pub fn show_menu_bar(ui: &mut Ui, app: &mut DiffPlayerApp) {
                 (false, Language::Quenya) => "Lir  (Espacio)",
             }).clicked() { if is_p { app.do_pause(); } else { app.do_play(); } ui.close_menu(); }
             if ui.button(match app.view().lang {
-                Language::Es => "Retroceder Frame  (←)", Language::En => "Step Backward  (←)", Language::Quenya => "Nánë Frame  (←)",
+                Language::Es => "Retroceder Frame (Izquierda / Left)", 
+                Language::En => "Step Backward (Left)", 
+                Language::Quenya => "Nánë Frame (Left)",
             }).clicked() { app.do_step_bck(); ui.close_menu(); }
             if ui.button(match app.view().lang {
-                Language::Es => "Avanzar Frame  (→)", Language::En => "Step Forward  (→)", Language::Quenya => "Pónë Frame  (→)",
+                Language::Es => "Avanzar Frame (Derecha / Right)", 
+                Language::En => "Step Forward (Right)", 
+                Language::Quenya => "Pónë Frame (Right)",
             }).clicked() { app.do_step_fwd(); ui.close_menu(); }
             if ui.button(match app.view().lang {
                 Language::Es => "Ir al inicio  (Home)", Language::En => "Go to Start  (Home)", Language::Quenya => "Mena Yessë  (Home)",
@@ -217,19 +221,19 @@ pub fn show_menu_bar(ui: &mut Ui, app: &mut DiffPlayerApp) {
 
         // Playback controls
         let is_playing = app.playback().is_playing;
-        if ui.button(RichText::new("⏮").size(16.0)).on_hover_text(match app.view().lang {
+        if ui.button(RichText::new("|<").size(16.0)).on_hover_text(match app.view().lang {
             Language::Es => "Inicio", Language::En => "Start", Language::Quenya => "Yessë",
         }).clicked() { app.do_seek(0.0); }
-        if ui.button(RichText::new("⏪").size(16.0)).on_hover_text(match app.view().lang {
-            Language::Es => "Retroceder (←)", Language::En => "Step back (←)", Language::Quenya => "Nánë (←)",
+        if ui.button(RichText::new("<<").size(16.0)).on_hover_text(match app.view().lang {
+            Language::Es => "Retroceder (Izquierda)", Language::En => "Step back (Left)", Language::Quenya => "Nánë (Left)",
         }).clicked() { app.do_step_bck(); }
-        if ui.button(RichText::new(if is_playing { "⏸" } else { "▶" }).size(16.0))
+        if ui.button(RichText::new(if is_playing { "||" } else { ">" }).size(16.0))
             .on_hover_text(match app.view().lang {
                 Language::Es => "Reproducir/Pausar (Espacio)", Language::En => "Play/Pause (Space)", Language::Quenya => "Lir/Talta",
             }).clicked()
         { if is_playing { app.do_pause(); } else { app.do_play(); } }
-        if ui.button(RichText::new("⏩").size(16.0)).on_hover_text(match app.view().lang {
-            Language::Es => "Avanzar (→)", Language::En => "Step fwd (→)", Language::Quenya => "Pónë (→)",
+        if ui.button(RichText::new(">>").size(16.0)).on_hover_text(match app.view().lang {
+            Language::Es => "Avanzar (Derecha)", Language::En => "Step fwd (Right)", Language::Quenya => "Pónë (Right)",
         }).clicked() { app.do_step_fwd(); }
 
         ui.separator();
@@ -282,13 +286,28 @@ pub fn show_menu_bar(ui: &mut Ui, app: &mut DiffPlayerApp) {
                 }
                 if app.view().mode == CompareMode::AbsDiff {
                     ui.separator();
-                    ui.horizontal(|ui| {
+                    let width = ui.available_width();
+                    if width > 300.0 {
+                        ui.horizontal(|ui| {
+                            let mut d_mode = app.view().diff_mode;
+                            if ui.radio_value(&mut d_mode, crate::types::DiffMode::LegacyAbs, "Legacy").changed() { app.view_mut().diff_mode = d_mode; }
+                            if ui.radio_value(&mut d_mode, crate::types::DiffMode::AbsLinear, "Linear").changed() { app.view_mut().diff_mode = d_mode; }
+                            if ui.radio_value(&mut d_mode, crate::types::DiffMode::AbsSqrt, "Sqrt").changed()    { app.view_mut().diff_mode = d_mode; }
+                            if ui.radio_value(&mut d_mode, crate::types::DiffMode::SignedDiverging, "Signed").changed() { app.view_mut().diff_mode = d_mode; }
+                        });
+                    } else {
+                        // Narrow UI: Use ComboBox
                         let mut d_mode = app.view().diff_mode;
-                        if ui.radio_value(&mut d_mode, crate::types::DiffMode::LegacyAbs, "Legacy").changed() { app.view_mut().diff_mode = d_mode; }
-                        if ui.radio_value(&mut d_mode, crate::types::DiffMode::AbsLinear, "Linear").changed() { app.view_mut().diff_mode = d_mode; }
-                        if ui.radio_value(&mut d_mode, crate::types::DiffMode::AbsSqrt, "Sqrt").changed()    { app.view_mut().diff_mode = d_mode; }
-                        if ui.radio_value(&mut d_mode, crate::types::DiffMode::SignedDiverging, "Signed").changed() { app.view_mut().diff_mode = d_mode; }
-                    });
+                        egui::ComboBox::from_id_source("diff_mode_combo")
+                            .selected_text(format!("{:?}", d_mode))
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(&mut d_mode, crate::types::DiffMode::LegacyAbs, "Legacy");
+                                ui.selectable_value(&mut d_mode, crate::types::DiffMode::AbsLinear, "Linear");
+                                ui.selectable_value(&mut d_mode, crate::types::DiffMode::AbsSqrt, "Sqrt");
+                                ui.selectable_value(&mut d_mode, crate::types::DiffMode::SignedDiverging, "Signed");
+                            });
+                        if d_mode != app.view().diff_mode { app.view_mut().diff_mode = d_mode; }
+                    }
                 }
             }
             CompareMode::SideBySide => {
@@ -298,16 +317,41 @@ pub fn show_menu_bar(ui: &mut Ui, app: &mut DiffPlayerApp) {
                     app.view_mut().amplifier = amp;
                 }
                 ui.separator();
-                ui.horizontal(|ui| {
+                let width = ui.available_width();
+                if width > 400.0 {
+                    ui.horizontal(|ui| {
+                        let mut d_mode = app.view().diff_mode;
+                        if ui.radio_value(&mut d_mode, crate::types::DiffMode::LegacyAbs, "Legacy").changed()    { app.view_mut().diff_mode = d_mode; }
+                        if ui.radio_value(&mut d_mode, crate::types::DiffMode::AbsLinear, "Linear").changed()    { app.view_mut().diff_mode = d_mode; }
+                        if ui.radio_value(&mut d_mode, crate::types::DiffMode::AbsSqrt, "Sqrt").changed()        { app.view_mut().diff_mode = d_mode; }
+                        if ui.radio_value(&mut d_mode, crate::types::DiffMode::SignedDiverging, "Signed").changed() { app.view_mut().diff_mode = d_mode; }
+                        if ui.radio_value(&mut d_mode, crate::types::DiffMode::None, match app.view().lang {
+                            Language::Es => "Sin Filtro", Language::En => "No Filter", Language::Quenya => "Munca U-winya",
+                        }).changed() { app.view_mut().diff_mode = d_mode; }
+                    });
+                } else {
+                    // Narrow UI: Use ComboBox
                     let mut d_mode = app.view().diff_mode;
-                    if ui.radio_value(&mut d_mode, crate::types::DiffMode::LegacyAbs, "Legacy").changed()    { app.view_mut().diff_mode = d_mode; }
-                    if ui.radio_value(&mut d_mode, crate::types::DiffMode::AbsLinear, "Linear").changed()    { app.view_mut().diff_mode = d_mode; }
-                    if ui.radio_value(&mut d_mode, crate::types::DiffMode::AbsSqrt, "Sqrt").changed()        { app.view_mut().diff_mode = d_mode; }
-                    if ui.radio_value(&mut d_mode, crate::types::DiffMode::SignedDiverging, "Signed").changed() { app.view_mut().diff_mode = d_mode; }
-                    if ui.radio_value(&mut d_mode, crate::types::DiffMode::None, match app.view().lang {
-                        Language::Es => "Sin Filtro", Language::En => "No Filter", Language::Quenya => "Munca U-winya",
-                    }).changed() { app.view_mut().diff_mode = d_mode; }
-                });
+                    egui::ComboBox::from_id_source("diff_mode_combo_sbs")
+                        .selected_text(match d_mode {
+                            crate::types::DiffMode::None => match app.view().lang {
+                                Language::Es => "Sin Filtro".to_owned(), 
+                                Language::En => "No Filter".to_owned(), 
+                                Language::Quenya => "Munca U-winya".to_owned(),
+                            },
+                            _ => format!("{:?}", d_mode),
+                        })
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut d_mode, crate::types::DiffMode::LegacyAbs, "Legacy");
+                            ui.selectable_value(&mut d_mode, crate::types::DiffMode::AbsLinear, "Linear");
+                            ui.selectable_value(&mut d_mode, crate::types::DiffMode::AbsSqrt, "Sqrt");
+                            ui.selectable_value(&mut d_mode, crate::types::DiffMode::SignedDiverging, "Signed");
+                            ui.selectable_value(&mut d_mode, crate::types::DiffMode::None, match app.view().lang {
+                                Language::Es => "Sin Filtro", Language::En => "No Filter", Language::Quenya => "Munca U-winya",
+                            });
+                        });
+                    if d_mode != app.view().diff_mode { app.view_mut().diff_mode = d_mode; }
+                }
             }
         }
 
@@ -315,7 +359,7 @@ pub fn show_menu_bar(ui: &mut Ui, app: &mut DiffPlayerApp) {
         let zoom = app.view().zoom;
         if (zoom - 1.0).abs() > 0.01 {
             ui.separator();
-            if ui.button(format!("🔍 {:.1}×", zoom))
+            if ui.button(format!("Zoom {:.1}x", zoom))
                 .on_hover_text(match app.view().lang {
                     Language::Es => "Reiniciar zoom (doble clic en imagen)",
                     Language::En => "Reset zoom (double-click canvas)",
@@ -347,7 +391,7 @@ pub fn show_audio_panel(ui: &mut Ui, app: &mut DiffPlayerApp) {
 
         ui.label(RichText::new("A").color(Color32::from_rgb(100, 200, 120)).strong());
         let mut mute_a = app.view().mute_a;
-        if ui.button(if mute_a { "🔇" } else { "🔊" }).clicked() {
+        if ui.button(if mute_a { "Mute On" } else { "Mute Off" }).clicked() {
             mute_a = !mute_a;
             app.view_mut().mute_a = mute_a;
         }
@@ -363,7 +407,7 @@ pub fn show_audio_panel(ui: &mut Ui, app: &mut DiffPlayerApp) {
 
         ui.label(RichText::new("B").color(Color32::from_rgb(100, 160, 240)).strong());
         let mut mute_b = app.view().mute_b;
-        if ui.button(if mute_b { "🔇" } else { "🔊" }).clicked() {
+        if ui.button(if mute_b { "Mute On" } else { "Mute Off" }).clicked() {
             mute_b = !mute_b;
             app.view_mut().mute_b = mute_b;
         }
