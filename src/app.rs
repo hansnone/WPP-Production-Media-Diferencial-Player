@@ -156,8 +156,6 @@ pub struct DiffPlayerApp {
     /// Last known pointer position while OS files are being dragged over the window
     drag_drop_hover_pos: Option<egui::Pos2>,
 
-    _audio_stream: Option<OutputStream>,
-    _audio_handle: Option<OutputStreamHandle>,
     sink_a: Option<Sink>,
     sink_b: Option<Sink>,
 
@@ -167,14 +165,13 @@ pub struct DiffPlayerApp {
 
     /// Keyboard repeat state
     last_step_time: f64,
+
+    /// Channel to receive the rodio output sinks from background thread
+    audio_init_rx: Option<Receiver<Option<(Sink, Sink)>>>,
 }
 
 impl DiffPlayerApp {
-    pub fn new(
-        cc: &eframe::CreationContext<'_>,
-        audio_stream: Option<OutputStream>,       // Nuevo parámetro recibido
-        audio_handle: Option<OutputStreamHandle>  // Nuevo parámetro recibido
-    ) -> Self {
+pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         // --- Load Arial font if available on this OS -----------------------
         setup_fonts(&cc.egui_ctx);
 
@@ -193,20 +190,39 @@ impl DiffPlayerApp {
             target_format,
         )));
 
-        // ¡Nota: Hemos eliminado el 'OutputStream::try_default()' que estaba aquí 
-        // porque ahora el motor de audio ya viene encendido desde main.rs!
-
-        let sink_a = audio_handle.as_ref().and_then(|h| Sink::try_new(h).ok());
-        let sink_b = audio_handle.as_ref().and_then(|h| Sink::try_new(h).ok());
-        if let Some(s) = &sink_a { s.set_volume(0.0); }
-        if let Some(s) = &sink_b { s.set_volume(0.0); }
-
         log::info!("Loading ViewState...");
         let view = ViewState::load();
         log::info!("Applying theme...");
         crate::ui::theme::apply_theme(&cc.egui_ctx, view.theme);
 
-        log::info!("App struct construction finished.");
+        // Spawn a background thread to initialize Rodio/CoreAudio.
+        // Doing this on the main thread before/during winit event loop creation deadlocks LaunchServices on macOS.
+        // Since OutputStream is !Send, the background thread must hold onto it forever.
+        let (audio_tx, audio_rx) = crossbeam_channel::bounded(1);
+        std::thread::spawn(move || {
+            log::info!("(Background Thread) Initializing CoreAudio/Rodio...");
+            match rodio::OutputStream::try_default() {
+                Ok((_stream, handle)) => {
+                    let sink_a = rodio::Sink::try_new(&handle).ok();
+                    let sink_b = rodio::Sink::try_new(&handle).ok();
+                    if let (Some(sa), Some(sb)) = (sink_a, sink_b) {
+                        let _ = audio_tx.send(Some((sa, sb)));
+                    } else {
+                        let _ = audio_tx.send(None);
+                    }
+                    
+                    // Keep the thread alive forever so _stream and handle are never dropped,
+                    // which is necessary for the audio sinks to keep playing.
+                    std::thread::park();
+                }
+                Err(e) => {
+                    log::error!("Failed to initialize audio backend: {}", e);
+                    let _ = audio_tx.send(None);
+                }
+            }
+        });
+
+        log::info!("App struct construction finished. Audio will be initialized lazily.");
         Self {
             decoder_a: None,
             decoder_b: None,
@@ -216,13 +232,12 @@ impl DiffPlayerApp {
             drag_start: None,
             dragging_split: false,
             drag_drop_hover_pos: None,
-            _audio_stream: audio_stream, // Guardamos el audio que nos pasaron
-            _audio_handle: audio_handle, // Guardamos el handle que nos pasaron
-            sink_a,
-            sink_b,
+            sink_a: None,
+            sink_b: None,
             error_title: None,
             error_message: None,
             last_step_time: 0.0,
+            audio_init_rx: Some(audio_rx),
         }
     }
 
@@ -503,7 +518,20 @@ impl DiffPlayerApp {
 
 impl eframe::App for DiffPlayerApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        log::debug!("App::update() called");
+        log::info!("App::update() called");
+        
+        // ── Check if background audio initialization finished ──
+        if let Some(rx) = &self.audio_init_rx {
+            if let Ok(Some((sink_a, sink_b))) = rx.try_recv() {
+                log::info!("Audio successfully initialized on background thread");
+                self.sink_a = Some(sink_a);
+                self.sink_b = Some(sink_b);
+                if let Some(s) = &self.sink_a { s.set_volume(0.0); }
+                if let Some(s) = &self.sink_b { s.set_volume(0.0); }
+                self.audio_init_rx = None; // Drop receiver
+            }
+        }
+
         if self.playback.is_playing {
             let dt = ctx.input(|i| i.stable_dt).min(0.1); 
             self.playback.current_pts += dt as f64;

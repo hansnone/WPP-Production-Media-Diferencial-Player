@@ -9,11 +9,14 @@ mod ui;
 use eframe::{egui, CreationContext, App};
 
 fn main() -> anyhow::Result<()> {
-    env_logger::Builder::from_default_env()
-        .filter_level(log::LevelFilter::Info)
-        .init();
+    // Escupir logs a un fichero temporal incondicionalmente para poder leer por qué no arranca la vista
+    let log_file = std::fs::File::create("/tmp/diffplayerqc_app.log")?;
+    let mut builder = env_logger::Builder::from_default_env();
+    builder.target(env_logger::Target::Pipe(Box::new(log_file)));
+    builder.filter_level(log::LevelFilter::Info);
+    builder.init();
 
-    log::info!("=== DiffPlayerQC Startup ===");
+    log::info!("=== DiffPlayerQC Startup (LOG REDIRECTED) ===");
 
     // Detect system dark/light mode
     let follow_dark = matches!(dark_light::detect(), dark_light::Mode::Dark);
@@ -53,27 +56,14 @@ fn main() -> anyhow::Result<()> {
         ..Default::default()
     };
     
-    // --- MODIFICACIÓN: Inicializamos el sistema de audio ANTES de iniciar eframe ---
-    log::info!("Inicializando sistema de audio CoreAudio/Rodio...");
-    let (audio_stream, audio_handle) = match rodio::OutputStream::try_default() {
-        Ok((s, h)) => (Some(s), Some(h)),
-        Err(e) => {
-            log::warn!("No se pudo inicializar el audio: {e}");
-            (None, None)
-        }
-    };
-    // -------------------------------------------------------------------------------
-
     log::info!("Starting eframe application loop...");
     eframe::run_native(
         "WPP Production Media Diferencial Player",
         native_options,
-        // Usamos 'move' para que el closure sea dueño de audio_stream y audio_handle
-        Box::new(move |cc: &CreationContext<'_>| {
+        Box::new(|cc: &CreationContext<'_>| {
             log::info!("CreationContext initialized, building app...");
             
-            // Le pasamos el stream y el handle inicializados a DiffPlayerApp
-            let app = app::DiffPlayerApp::new(cc, audio_stream, audio_handle);
+            let app = app::DiffPlayerApp::new(cc);
             
             Box::new(app) as Box<dyn App>
         }),
