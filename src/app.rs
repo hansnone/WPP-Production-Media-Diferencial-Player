@@ -256,7 +256,7 @@ impl DiffPlayerApp {
                 match chan {
                     Channel::A => {
                         // Stop old decoder if any
-                        if let Some(old) = &self.decoder_a {
+                        if let Some(old) = self.decoder_a.take() {
                             let _ = old.cmd_tx.send(DecoderCommand::Stop);
                         }
                         self.playback.duration_a = handle.meta.duration_secs;
@@ -265,7 +265,7 @@ impl DiffPlayerApp {
                         // No need for repaint here as do_seek handles it
                     }
                     Channel::B => {
-                        if let Some(old) = &self.decoder_b {
+                        if let Some(old) = self.decoder_a.take() {
                             let _ = old.cmd_tx.send(DecoderCommand::Stop);
                         }
                         self.playback.duration_b = handle.meta.duration_secs;

@@ -479,7 +479,7 @@ unsafe fn decode_one_frame(
             while ffi::avcodec_receive_frame(ctx.audio_codec_ctx, frame) == 0 {
                 if let Some(audio) = convert_audio_frame(ctx, frame)? {
                     // Send without blocking completely if UI is stuck, or just send (bounded limits memory)
-                    let _ = audio_tx.send(audio);
+                    let _ = audio_tx.try_send(audio);
                 }
                 ffi::av_frame_unref(frame);
             }
