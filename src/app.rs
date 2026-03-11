@@ -170,7 +170,11 @@ pub struct DiffPlayerApp {
 }
 
 impl DiffPlayerApp {
-    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(
+        cc: &eframe::CreationContext<'_>,
+        audio_stream: Option<OutputStream>,       // Nuevo parámetro recibido
+        audio_handle: Option<OutputStreamHandle>  // Nuevo parámetro recibido
+    ) -> Self {
         // --- Load Arial font if available on this OS -----------------------
         setup_fonts(&cc.egui_ctx);
 
@@ -179,7 +183,7 @@ impl DiffPlayerApp {
             Some(rs) => rs,
             None => {
                 log::error!("CRITICAL: eframe did not provide Wgpu render state. The app cannot continue.");
-                panic!("Wgpu render state missing"); // Still panic but with explicit log before
+                panic!("Wgpu render state missing"); 
             }
         };
 
@@ -189,10 +193,9 @@ impl DiffPlayerApp {
             target_format,
         )));
 
-        let (audio_stream, audio_handle) = match OutputStream::try_default() {
-            Ok((s, h)) => (Some(s), Some(h)),
-            Err(_) => (None, None),
-        };
+        // ¡Nota: Hemos eliminado el 'OutputStream::try_default()' que estaba aquí 
+        // porque ahora el motor de audio ya viene encendido desde main.rs!
+
         let sink_a = audio_handle.as_ref().and_then(|h| Sink::try_new(h).ok());
         let sink_b = audio_handle.as_ref().and_then(|h| Sink::try_new(h).ok());
         if let Some(s) = &sink_a { s.set_volume(0.0); }
@@ -213,8 +216,8 @@ impl DiffPlayerApp {
             drag_start: None,
             dragging_split: false,
             drag_drop_hover_pos: None,
-            _audio_stream: audio_stream,
-            _audio_handle: audio_handle,
+            _audio_stream: audio_stream, // Guardamos el audio que nos pasaron
+            _audio_handle: audio_handle, // Guardamos el handle que nos pasaron
             sink_a,
             sink_b,
             error_title: None,
