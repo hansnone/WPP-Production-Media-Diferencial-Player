@@ -41,3 +41,12 @@ panic         = "abort" # Reducir el tamaño eliminando el control de pánicos
 
 [profile.dev]
 opt-level     = 1
+
+# Desactivar las aserciones de debug estrictas en icrate y objc2 para evitar
+# el crasheo en macOS 15+ (Sequoia) debido a countByEnumeratingWithState
+
+[profile.dev.package.icrate]
+debug-assertions = false
+
+[profile.dev.package.objc2]
+debug-assertions = false
