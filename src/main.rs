@@ -38,7 +38,9 @@ fn main() -> anyhow::Result<()> {
     let mut viewport_builder = egui::ViewportBuilder::default()
         .with_title("WPP Production Media Diferencial Player")
         .with_inner_size([1600.0, 900.0])
-        .with_min_inner_size([900.0, 560.0]);
+        .with_min_inner_size([900.0, 560.0])
+        .with_active(true)
+        .with_visible(true);
 
     if let Some(icon) = icon_data {
         viewport_builder = viewport_builder.with_icon(std::sync::Arc::new(icon));

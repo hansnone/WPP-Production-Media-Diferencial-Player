@@ -9,7 +9,7 @@ use crate::renderer::{RenderCallback, ShaderUniforms, VideoRenderer};
 use crate::types::{
     Channel, ColorMetadata, CompareMode, DiffMode, DecoderCommand, PlaybackState, VideoFrame, AudioFrame, Language,
 };
-use rodio::Sink;
+use rodio::{OutputStream, Sink};
 use std::path::PathBuf;
 
 use serde::{Serialize, Deserialize};
@@ -153,16 +153,15 @@ pub struct DiffPlayerApp {
     dragging_split: bool,
     drag_drop_hover_pos: Option<egui::Pos2>,
 
+    // DE VUELTA AL ORIGINAL
+    _audio_stream: Option<OutputStream>, 
     sink_a: Option<Sink>,
     sink_b: Option<Sink>,
-
-    audio_rx: Option<Receiver<Option<(Sink, Sink)>>>,
 
     error_title: Option<String>,
     error_message: Option<String>,
     last_step_time: f64,
 }
-
 impl DiffPlayerApp {
 pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         setup_fonts(&cc.egui_ctx);
@@ -181,32 +180,25 @@ pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let view = ViewState::load();
         crate::ui::theme::apply_theme(&cc.egui_ctx, view.theme);
 
-        // --- SOLUCIÓN: HILO SECUNDARIO PARA EL AUDIO ---
-        let (audio_tx, audio_rx) = crossbeam_channel::bounded(1);
-std::thread::spawn(move || {
-            if let Ok((_stream, handle)) = rodio::OutputStream::try_default() {
-                if let (Ok(sa), Ok(sb)) = (rodio::Sink::try_new(&handle), rodio::Sink::try_new(&handle)) {
+        // INICIALIZACIÓN DIRECTA (¡Ya no hay dark_light que moleste!)
+        log::info!("Inicializando Audio en el hilo principal...");
+        let (audio_stream, sink_a, sink_b) = match rodio::OutputStream::try_default() {
+            Ok((stream, handle)) => {
+                let s_a = rodio::Sink::try_new(&handle).ok();
+                let s_b = rodio::Sink::try_new(&handle).ok();
+                if let (Some(sa), Some(sb)) = (&s_a, &s_b) {
                     sa.set_volume(0.0);
                     sb.set_volume(0.0);
-                    
-                    // Enviamos ÚNICAMENTE los Sinks al hilo principal
-                    if audio_tx.send(Some((sa, sb))).is_ok() {
-                        log::info!("Sinks enviados. Aparcando hilo de audio para mantenerlo vivo.");
-                        // MAGIA: Dormimos este hilo para siempre. 
-                        // Así, '_stream' nunca se destruye y el audio sigue sonando.
-                        loop {
-                            std::thread::park();
-                        }
-                    }
-                    return;
                 }
+                (Some(stream), s_a, s_b)
             }
-            // Si algo falla, enviamos None
-            let _ = audio_tx.send(None);
-        });
-        // -----------------------------------------------
+            Err(e) => {
+                log::error!("Error al inicializar audio: {}", e);
+                (None, None, None)
+            }
+        };
 
-Self {
+        Self {
             decoder_a: None,
             decoder_b: None,
             view,
@@ -215,9 +207,11 @@ Self {
             drag_start: None,
             dragging_split: false,
             drag_drop_hover_pos: None,
-            sink_a: None,      // Inicializado vacío
-            sink_b: None,      // Inicializado vacío
-            audio_rx: Some(audio_rx), 
+            
+            _audio_stream: audio_stream,
+            sink_a,
+            sink_b,
+            
             error_title: None,
             error_message: None,
             last_step_time: 0.0,
@@ -503,20 +497,7 @@ Self {
 impl eframe::App for DiffPlayerApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         log::info!("App::update() called");
-
-// REVISAR SI EL AUDIO YA SE CARGÓ EN SEGUNDO PLANO (No bloquea la ventana)
-if let Some(rx) = &self.audio_rx {
-            if let Ok(res) = rx.try_recv() { 
-                if let Some((sa, sb)) = res {
-                    self.sink_a = Some(sa);
-                    self.sink_b = Some(sb);
-                    log::info!("Audio inicializado con éxito en segundo plano.");
-                } else {
-                    log::error!("Fallo al inicializar el sistema de audio.");
-                }
-                self.audio_rx = None; 
-            }
-        }
+        ctx.request_repaint();
 
         if self.playback.is_playing {
             let dt = ctx.input(|i| i.stable_dt).min(0.1); 
