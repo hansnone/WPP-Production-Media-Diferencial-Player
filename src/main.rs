@@ -18,9 +18,6 @@ fn main() -> anyhow::Result<()> {
 
     log::info!("=== DiffPlayerQC Startup (LOG REDIRECTED) ===");
 
-    // Detect system dark/light mode
-    let follow_dark = matches!(dark_light::detect(), dark_light::Mode::Dark);
-
     // Load app icon from embedded bytes (compiled into binary)
     let icon_data = {
         let icon_bytes = include_bytes!("../assets/Icon-iOS-Default-1024x1024@1x.png");
@@ -46,17 +43,19 @@ fn main() -> anyhow::Result<()> {
     if let Some(icon) = icon_data {
         viewport_builder = viewport_builder.with_icon(std::sync::Arc::new(icon));
     }
-
-    let native_options = eframe::NativeOptions {
+    
+// WORKAROUND: Dejamos que eframe gestione el tema para evitar el deadlock de dark_light
+let native_options = eframe::NativeOptions {
         renderer: eframe::Renderer::Wgpu,
         viewport: viewport_builder,
         follow_system_theme: true,
-        default_theme: if follow_dark { eframe::Theme::Dark } else { eframe::Theme::Light },
-        centered: true,
+        default_theme: eframe::Theme::Dark, // <-- Cambia esto a Dark
+        // centered: true,
         ..Default::default()
     };
-    
+
     log::info!("Starting eframe application loop...");
+
     eframe::run_native(
         "WPP Production Media Diferencial Player",
         native_options,

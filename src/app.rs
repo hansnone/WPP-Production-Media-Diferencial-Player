@@ -9,7 +9,7 @@ use crate::renderer::{RenderCallback, ShaderUniforms, VideoRenderer};
 use crate::types::{
     Channel, ColorMetadata, CompareMode, DiffMode, DecoderCommand, PlaybackState, VideoFrame, AudioFrame, Language,
 };
-use rodio::{OutputStream, OutputStreamHandle, Sink};
+use rodio::{OutputStream, Sink};
 use std::path::PathBuf;
 
 use serde::{Serialize, Deserialize};
@@ -158,6 +158,8 @@ pub struct DiffPlayerApp {
     sink_a: Option<Sink>,
     sink_b: Option<Sink>,
 
+    audio_initialized: bool, // <--- NUEVO CAMPO
+
     error_title: Option<String>,
     error_message: Option<String>,
     last_step_time: f64,
@@ -169,10 +171,7 @@ pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
 
         let render_state = match cc.wgpu_render_state.as_ref() {
             Some(rs) => rs,
-            None => {
-                log::error!("CRITICAL: eframe did not provide Wgpu render state.");
-                panic!("Wgpu render state missing"); 
-            }
+            None => panic!("Wgpu render state missing"),
         };
 
         let target_format = render_state.target_format;
@@ -181,30 +180,10 @@ pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
             target_format,
         )));
 
-        log::info!("Loading ViewState...");
         let view = ViewState::load();
-        log::info!("Applying theme...");
         crate::ui::theme::apply_theme(&cc.egui_ctx, view.theme);
 
-        // Inicializamos el audio directamente en el hilo principal
-        log::info!("Initializing Audio...");
-        let (audio_stream, sink_a, sink_b) = match rodio::OutputStream::try_default() {
-            Ok((stream, handle)) => {
-                let s_a = rodio::Sink::try_new(&handle).ok();
-                let s_b = rodio::Sink::try_new(&handle).ok();
-                if let (Some(sa), Some(sb)) = (&s_a, &s_b) {
-                    sa.set_volume(0.0);
-                    sb.set_volume(0.0);
-                }
-                (Some(stream), s_a, s_b)
-            }
-            Err(e) => {
-                log::error!("Failed to initialize audio backend: {}", e);
-                (None, None, None)
-            }
-        };
-
-        log::info!("App struct construction finished.");
+        // NADA de Audio aquí. Arrancamos en total silencio.
         Self {
             decoder_a: None,
             decoder_b: None,
@@ -214,9 +193,10 @@ pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
             drag_start: None,
             dragging_split: false,
             drag_drop_hover_pos: None,
-            _audio_stream: audio_stream, // Guardado para que no muera el sonido
-            sink_a,
-            sink_b,
+            _audio_stream: None,
+            sink_a: None,
+            sink_b: None,
+            audio_initialized: false,
             error_title: None,
             error_message: None,
             last_step_time: 0.0,
@@ -241,6 +221,22 @@ pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
 
     /// Load a video from a filesystem path into the given channel, replacing any existing video.
     pub fn open_video_from_path(&mut self, path_str: String, chan: Channel, ctx: &egui::Context) {
+        // WORKAROUND: Inicializar CoreAudio SOLO la primera vez que se carga un vídeo
+        if !self.audio_initialized {
+            log::info!("Ventana estable. Despertando el sistema de audio...");
+            if let Ok((stream, handle)) = rodio::OutputStream::try_default() {
+                self.sink_a = rodio::Sink::try_new(&handle).ok();
+                self.sink_b = rodio::Sink::try_new(&handle).ok();
+                self._audio_stream = Some(stream);
+                
+                if let Some(sa) = &self.sink_a { sa.set_volume(0.0); }
+                if let Some(sb) = &self.sink_b { sb.set_volume(0.0); }
+                log::info!("Audio inicializado correctamente.");
+            } else {
+                log::error!("Error al contactar con CoreAudio.");
+            }
+            self.audio_initialized = true; // Ya no volvemos a intentarlo
+        }
         match decoder::spawn_decoder(&path_str) {
             Ok((cmd_tx, frame_rx, audio_rx, meta)) => {
                 let handle = DecoderHandle {
@@ -501,6 +497,24 @@ pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
 impl eframe::App for DiffPlayerApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         log::info!("App::update() called");
+
+// WORKAROUND: Inicializamos el audio en el Frame 1, cuando la ventana ya domina el hilo principal.
+        if !self.audio_initialized {
+            self.audio_initialized = true;
+            log::info!("Ventana dibujada. Inicializando CoreAudio de forma segura...");
+            
+            if let Ok((stream, handle)) = rodio::OutputStream::try_default() {
+                self.sink_a = rodio::Sink::try_new(&handle).ok();
+                self.sink_b = rodio::Sink::try_new(&handle).ok();
+                self._audio_stream = Some(stream);
+                
+                if let Some(sa) = &self.sink_a { sa.set_volume(0.0); }
+                if let Some(sb) = &self.sink_b { sb.set_volume(0.0); }
+                log::info!("Audio inicializado con éxito.");
+            } else {
+                log::error!("Fallo al inicializar el sistema de audio.");
+            }
+        }
 
         if self.playback.is_playing {
             let dt = ctx.input(|i| i.stable_dt).min(0.1); 
