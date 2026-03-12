@@ -9,7 +9,7 @@ use crate::renderer::{RenderCallback, ShaderUniforms, VideoRenderer};
 use crate::types::{
     Channel, ColorMetadata, CompareMode, DiffMode, DecoderCommand, PlaybackState, VideoFrame, AudioFrame, Language,
 };
-use rodio::{OutputStream, Sink};
+use rodio::Sink;
 use std::path::PathBuf;
 
 use serde::{Serialize, Deserialize};
@@ -153,12 +153,10 @@ pub struct DiffPlayerApp {
     dragging_split: bool,
     drag_drop_hover_pos: Option<egui::Pos2>,
 
-    // Guardamos el stream aquí para que viva mientras la app esté abierta
-    _audio_stream: Option<OutputStream>, 
     sink_a: Option<Sink>,
     sink_b: Option<Sink>,
 
-    audio_initialized: bool, // <--- NUEVO CAMPO
+    audio_rx: Option<Receiver<Option<(Sink, Sink)>>>,
 
     error_title: Option<String>,
     error_message: Option<String>,
@@ -183,8 +181,32 @@ pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let view = ViewState::load();
         crate::ui::theme::apply_theme(&cc.egui_ctx, view.theme);
 
-        // NADA de Audio aquí. Arrancamos en total silencio.
-        Self {
+        // --- SOLUCIÓN: HILO SECUNDARIO PARA EL AUDIO ---
+        let (audio_tx, audio_rx) = crossbeam_channel::bounded(1);
+std::thread::spawn(move || {
+            if let Ok((_stream, handle)) = rodio::OutputStream::try_default() {
+                if let (Ok(sa), Ok(sb)) = (rodio::Sink::try_new(&handle), rodio::Sink::try_new(&handle)) {
+                    sa.set_volume(0.0);
+                    sb.set_volume(0.0);
+                    
+                    // Enviamos ÚNICAMENTE los Sinks al hilo principal
+                    if audio_tx.send(Some((sa, sb))).is_ok() {
+                        log::info!("Sinks enviados. Aparcando hilo de audio para mantenerlo vivo.");
+                        // MAGIA: Dormimos este hilo para siempre. 
+                        // Así, '_stream' nunca se destruye y el audio sigue sonando.
+                        loop {
+                            std::thread::park();
+                        }
+                    }
+                    return;
+                }
+            }
+            // Si algo falla, enviamos None
+            let _ = audio_tx.send(None);
+        });
+        // -----------------------------------------------
+
+Self {
             decoder_a: None,
             decoder_b: None,
             view,
@@ -193,10 +215,9 @@ pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
             drag_start: None,
             dragging_split: false,
             drag_drop_hover_pos: None,
-            _audio_stream: None,
-            sink_a: None,
-            sink_b: None,
-            audio_initialized: false,
+            sink_a: None,      // Inicializado vacío
+            sink_b: None,      // Inicializado vacío
+            audio_rx: Some(audio_rx), 
             error_title: None,
             error_message: None,
             last_step_time: 0.0,
@@ -221,22 +242,7 @@ pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
 
     /// Load a video from a filesystem path into the given channel, replacing any existing video.
     pub fn open_video_from_path(&mut self, path_str: String, chan: Channel, ctx: &egui::Context) {
-        // WORKAROUND: Inicializar CoreAudio SOLO la primera vez que se carga un vídeo
-        if !self.audio_initialized {
-            log::info!("Ventana estable. Despertando el sistema de audio...");
-            if let Ok((stream, handle)) = rodio::OutputStream::try_default() {
-                self.sink_a = rodio::Sink::try_new(&handle).ok();
-                self.sink_b = rodio::Sink::try_new(&handle).ok();
-                self._audio_stream = Some(stream);
-                
-                if let Some(sa) = &self.sink_a { sa.set_volume(0.0); }
-                if let Some(sb) = &self.sink_b { sb.set_volume(0.0); }
-                log::info!("Audio inicializado correctamente.");
-            } else {
-                log::error!("Error al contactar con CoreAudio.");
-            }
-            self.audio_initialized = true; // Ya no volvemos a intentarlo
-        }
+
         match decoder::spawn_decoder(&path_str) {
             Ok((cmd_tx, frame_rx, audio_rx, meta)) => {
                 let handle = DecoderHandle {
@@ -498,21 +504,17 @@ impl eframe::App for DiffPlayerApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         log::info!("App::update() called");
 
-// WORKAROUND: Inicializamos el audio en el Frame 1, cuando la ventana ya domina el hilo principal.
-        if !self.audio_initialized {
-            self.audio_initialized = true;
-            log::info!("Ventana dibujada. Inicializando CoreAudio de forma segura...");
-            
-            if let Ok((stream, handle)) = rodio::OutputStream::try_default() {
-                self.sink_a = rodio::Sink::try_new(&handle).ok();
-                self.sink_b = rodio::Sink::try_new(&handle).ok();
-                self._audio_stream = Some(stream);
-                
-                if let Some(sa) = &self.sink_a { sa.set_volume(0.0); }
-                if let Some(sb) = &self.sink_b { sb.set_volume(0.0); }
-                log::info!("Audio inicializado con éxito.");
-            } else {
-                log::error!("Fallo al inicializar el sistema de audio.");
+// REVISAR SI EL AUDIO YA SE CARGÓ EN SEGUNDO PLANO (No bloquea la ventana)
+if let Some(rx) = &self.audio_rx {
+            if let Ok(res) = rx.try_recv() { 
+                if let Some((sa, sb)) = res {
+                    self.sink_a = Some(sa);
+                    self.sink_b = Some(sb);
+                    log::info!("Audio inicializado con éxito en segundo plano.");
+                } else {
+                    log::error!("Fallo al inicializar el sistema de audio.");
+                }
+                self.audio_rx = None; 
             }
         }
 
