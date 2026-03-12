@@ -65,7 +65,11 @@ impl VideoTexture {
     pub fn new(device: &wgpu::Device, width: u32, height: u32) -> Self {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("video_texture"),
-            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -74,7 +78,12 @@ impl VideoTexture {
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        Self { texture, view, width, height }
+        Self {
+            texture,
+            view,
+            width,
+            height,
+        }
     }
 
     /// Upload new RGBA pixel data. Recreates the texture if dimensions changed.
@@ -105,7 +114,11 @@ impl VideoTexture {
                 bytes_per_row: Some(bytes_per_row),
                 rows_per_image: Some(height),
             },
-            wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
         );
     }
 }
@@ -130,9 +143,7 @@ impl VideoRenderer {
         // Load WGSL shader
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("compare_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!("../shaders/compare.wgsl").into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/compare.wgsl").into()),
         });
 
         // Uniform buffer
@@ -206,7 +217,14 @@ impl VideoRenderer {
             ],
         });
 
-        let bind_group = make_bind_group(device, &bind_group_layout, &tex_a, &tex_b, &sampler, &uniform_buffer);
+        let bind_group = make_bind_group(
+            device,
+            &bind_group_layout,
+            &tex_a,
+            &tex_b,
+            &sampler,
+            &uniform_buffer,
+        );
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("compare_pipeline_layout"),
@@ -220,7 +238,7 @@ impl VideoRenderer {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: "vs_main",
-                buffers: &[],  // fullscreen triangle, no vertex buffer
+                buffers: &[], // fullscreen triangle, no vertex buffer
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
@@ -330,7 +348,7 @@ impl egui_wgpu::CallbackTrait for RenderCallback {
         _callback_resources: &'a egui_wgpu::CallbackResources,
     ) {
         let rend = self.renderer.lock();
-        
+
         // SAFETY: We are recording commands into the RenderPass which will be submitted immediately.
         // The VideoRenderer (and its pipeline/bind_group) is kept alive by the Arc in RenderCallback.
         unsafe {

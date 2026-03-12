@@ -8,14 +8,11 @@ use crate::types::Language;
 /// Draw the timeline scrubber at the bottom of the window.
 pub fn show(ui: &mut Ui, app: &mut DiffPlayerApp) {
     let is_es = app.view().lang == Language::Es;
-    let duration = app
-        .playback()
-        .duration_a
-        .max(app.playback().duration_b);
+    let duration = app.playback().duration_a.max(app.playback().duration_b);
 
     // Always reserve the full width, 44 px tall
     let available_width = ui.available_width();
-    let desired_size    = Vec2::new(available_width, 44.0);
+    let desired_size = Vec2::new(available_width, 44.0);
     let (rect, response) = ui.allocate_exact_size(desired_size, Sense::click_and_drag());
 
     let painter = ui.painter();
@@ -25,18 +22,18 @@ pub fn show(ui: &mut Ui, app: &mut DiffPlayerApp) {
         Pos2::new(rect.left() + 4.0, rect.center().y - 4.0),
         Pos2::new(rect.right() - 4.0, rect.center().y + 4.0),
     );
-    painter.rect_filled(
-        track_rect,
-        2.0,
-        ui.visuals().widgets.noninteractive.bg_fill,
-    );
+    painter.rect_filled(track_rect, 2.0, ui.visuals().widgets.noninteractive.bg_fill);
 
     if duration <= 0.0 {
         // No video loaded — draw a disabled track
         painter.text(
             rect.center(),
             egui::Align2::CENTER_CENTER,
-            if is_es { "──── línea de tiempo ────" } else { "──── timeline ────" },
+            if is_es {
+                "──── línea de tiempo ────"
+            } else {
+                "──── timeline ────"
+            },
             egui::FontId::proportional(11.0),
             ui.visuals().text_color().gamma_multiply(0.3),
         );
@@ -44,15 +41,12 @@ pub fn show(ui: &mut Ui, app: &mut DiffPlayerApp) {
     }
 
     // ── Played portion ────────────────────────────────────────────────────
-    let current_pts  = app.playback().current_pts;
-    let progress     = (current_pts / duration).clamp(0.0, 1.0) as f32;
+    let current_pts = app.playback().current_pts;
+    let progress = (current_pts / duration).clamp(0.0, 1.0) as f32;
     let played_right = track_rect.left() + track_rect.width() * progress;
 
     painter.rect_filled(
-        Rect::from_min_max(
-            track_rect.min,
-            Pos2::new(played_right, track_rect.max.y),
-        ),
+        Rect::from_min_max(track_rect.min, Pos2::new(played_right, track_rect.max.y)),
         2.0,
         Color32::from_rgb(80, 160, 230),
     );
@@ -63,14 +57,22 @@ pub fn show(ui: &mut Ui, app: &mut DiffPlayerApp) {
 
     let is_hovered = response.hovered();
     let handle_radius = if is_hovered { 9.0 } else { 7.0 };
-    painter.circle_filled(handle_center, handle_radius + 1.5, ui.visuals().window_fill());
-    painter.circle_filled(handle_center, handle_radius, Color32::from_rgb(80, 160, 230));
+    painter.circle_filled(
+        handle_center,
+        handle_radius + 1.5,
+        ui.visuals().window_fill(),
+    );
+    painter.circle_filled(
+        handle_center,
+        handle_radius,
+        Color32::from_rgb(80, 160, 230),
+    );
 
     // ── Timecode labels ───────────────────────────────────────────────────
     let current_label = format_timecode(current_pts);
     let duration_label = format_timecode(duration);
     let font = egui::FontId::monospace(11.0);
-    let dim  = ui.visuals().text_color().gamma_multiply(0.7);
+    let dim = ui.visuals().text_color().gamma_multiply(0.7);
 
     painter.text(
         Pos2::new(rect.left() + 6.0, rect.top() + 4.0),

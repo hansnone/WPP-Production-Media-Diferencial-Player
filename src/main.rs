@@ -3,10 +3,12 @@
 mod app;
 mod decoder;
 mod renderer;
+mod trace_log;
 mod types;
 mod ui;
 
-use eframe::{egui, CreationContext, App};
+use eframe::{egui, App, CreationContext};
+use image::imageops::FilterType;
 
 fn main() -> anyhow::Result<()> {
     // Escupir logs a un fichero temporal incondicionalmente para poder leer por qué no arranca la vista
@@ -18,41 +20,45 @@ fn main() -> anyhow::Result<()> {
 
     log::info!("=== DiffPlayerQC Startup (LOG REDIRECTED) ===");
 
-    // Load app icon from embedded bytes (compiled into binary)
-    let icon_data = {
+    // Human-readable trace log (one file per run: yyyy_mm_dd_hh_mm_ss_Diff_start.log)
+    let log_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    if let Err(e) = trace_log::init(log_dir) {
+        log::warn!("Trace log init failed: {e}");
+    } else {
+        trace_log::log("DiffPlayerQC started");
+    }
+
+    // Load icon and resize to 64x64 so macOS window creation doesn't block (large icons can hang).
+    let icon_data: Option<egui::IconData> = {
         let icon_bytes = include_bytes!("../assets/Icon-iOS-Default-1024x1024@1x.png");
-        match image::load_from_memory(icon_bytes) {
-            Ok(img) => {
-                let rgba = img.into_rgba8();
-                let (w, h) = rgba.dimensions();
-                let pixels = rgba.into_raw();
-                Some(egui::IconData { rgba: pixels, width: w, height: h })
+        image::load_from_memory(icon_bytes).ok().map(|img| {
+            let rgba = img.into_rgba8();
+            let small = image::imageops::resize(&rgba, 64, 64, FilterType::Triangle);
+            let (w, h) = small.dimensions();
+            let pixels = small.into_raw();
+            egui::IconData {
+                rgba: pixels,
+                width: w,
+                height: h,
             }
-            Err(e) => {
-                log::warn!("Could not load app icon: {e}");
-                None
-            }
-        }
+        })
     };
 
     let mut viewport_builder = egui::ViewportBuilder::default()
         .with_title("WPP Production Media Diferencial Player")
         .with_inner_size([1600.0, 900.0])
-        .with_min_inner_size([900.0, 560.0])
-        .with_active(true)
-        .with_visible(true);
+        .with_min_inner_size([900.0, 560.0]);
 
     if let Some(icon) = icon_data {
         viewport_builder = viewport_builder.with_icon(std::sync::Arc::new(icon));
     }
-    
-// WORKAROUND: Dejamos que eframe gestione el tema para evitar el deadlock de dark_light
-let native_options = eframe::NativeOptions {
+
+    let native_options = eframe::NativeOptions {
         renderer: eframe::Renderer::Wgpu,
         viewport: viewport_builder,
-        follow_system_theme: true,
-        default_theme: eframe::Theme::Dark, // <-- Cambia esto a Dark
-        // centered: true,
+        follow_system_theme: false,
+        default_theme: eframe::Theme::Dark,
+        centered: false,
         ..Default::default()
     };
 
@@ -63,9 +69,8 @@ let native_options = eframe::NativeOptions {
         native_options,
         Box::new(|cc: &CreationContext<'_>| {
             log::info!("CreationContext initialized, building app...");
-            
+            trace_log::log("CreationContext ready, building app");
             let app = app::DiffPlayerApp::new(cc);
-            
             Box::new(app) as Box<dyn App>
         }),
     )

@@ -1,6 +1,6 @@
 // types.rs — Shared data types across all modules
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 /// A decoded video frame ready for GPU upload.
 #[derive(Clone)]
@@ -69,7 +69,9 @@ pub enum CompareMode {
 }
 
 impl Default for CompareMode {
-    fn default() -> Self { Self::SplitScreen }
+    fn default() -> Self {
+        Self::SplitScreen
+    }
 }
 
 /// The specific algorithm used when evaluating `CompareMode::AbsDiff`
@@ -84,12 +86,10 @@ pub enum DiffMode {
 }
 
 impl Default for DiffMode {
-    fn default() -> Self { Self::AbsLinear }
+    fn default() -> Self {
+        Self::AbsLinear
+    }
 }
-
-
-
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Language {
@@ -99,7 +99,9 @@ pub enum Language {
 }
 
 impl Default for Language {
-    fn default() -> Self { Self::Es }
+    fn default() -> Self {
+        Self::Es
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -132,16 +134,23 @@ pub enum Theme {
 }
 
 impl Default for Theme {
-    fn default() -> Self { Self::Dark }
+    fn default() -> Self {
+        Self::Dark
+    }
 }
 
 /// Playback state shared between the UI and decoder coordination logic.
+/// Master clock: when playing, current_pts = playback_start_pts + elapsed since playback_start_instant.
 #[derive(Debug, Clone, Default)]
 pub struct PlaybackState {
     pub is_playing: bool,
     pub current_pts: f64,
     pub duration_a: f64,
     pub duration_b: f64,
+    /// When set, current_pts is derived from this instant + playback_start_pts (system-time master clock).
+    pub playback_start_instant: Option<std::time::Instant>,
+    /// PTS at the moment we started (or seeked during) playback.
+    pub playback_start_pts: f64,
 }
 
 /// Which video channel (A or B).
