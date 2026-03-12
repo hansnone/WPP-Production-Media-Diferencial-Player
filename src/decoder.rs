@@ -406,7 +406,7 @@ unsafe fn handle_cmd(
             let frame = ffi::av_frame_alloc();
             if let Some(f) = decode_one_frame(ctx, packet, frame, audio_tx)? {
                 let frame_pts_raw = secs_to_pts(f.pts, ctx.time_base);
-                if frame_tx.send(f).is_ok() {
+                if frame_tx.try_send(f).is_ok() {
                     *current_pts = frame_pts_raw;
                 }
             }
