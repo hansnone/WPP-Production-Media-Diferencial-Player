@@ -187,7 +187,37 @@ pub struct DiffPlayerApp {
 
     /// Incremented each frame. Frame 0 skips all Wgpu work so the window can appear on macOS.
     frame_count: u64,
+
+    /// Deferred play/pause toggle (Space): process at start of next update to avoid re-entrancy deadlock.
+    pending_play_pause_toggle: bool,
+
+    /// Deferred key action: process at start of next update to avoid re-entrancy/deadlock when called from ctx.input().
+    pending_key_action: PendingKeyAction,
 }
+
+/// Key actions deferred from ctx.input() to start of update() to avoid re-entrancy on macOS.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum PendingKeyAction {
+    None,
+    StepFwd,
+    StepBck,
+    Seek(f64),
+    CycleMode,
+    SideBySide,
+    SplitPos0,
+    SplitPos1,
+    ToggleHud,
+    Zoom(f32),
+    ResetZoomPan,
+    SwapVideos,
+}
+
+impl Default for PendingKeyAction {
+    fn default() -> Self {
+        PendingKeyAction::None
+    }
+}
+
 impl DiffPlayerApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         setup_fonts(&cc.egui_ctx);
@@ -250,6 +280,8 @@ impl DiffPlayerApp {
             last_step_time: 0.0,
             focus_visible_frames_left: 15,
             frame_count: 0,
+            pending_play_pause_toggle: false,
+            pending_key_action: PendingKeyAction::None,
         }
     }
     // -----------------------------------------------------------------------
@@ -514,6 +546,9 @@ impl DiffPlayerApp {
         ctx.request_repaint();
     }
     pub fn swap_videos(&mut self, ctx: &egui::Context) {
+        self.swap_videos_inner(ctx);
+    }
+    fn swap_videos_inner(&mut self, ctx: &egui::Context) {
         std::mem::swap(&mut self.decoder_a, &mut self.decoder_b);
         std::mem::swap(&mut self.playback.duration_a, &mut self.playback.duration_b);
         std::mem::swap(&mut self.view.mute_a, &mut self.view.mute_b);
@@ -543,6 +578,57 @@ impl eframe::App for DiffPlayerApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
             self.focus_visible_frames_left -= 1;
+        }
+        // Process deferred play/pause toggle (Space) so we don't run play_both/pause_both from inside ctx.input() (avoids re-entrancy/deadlock on macOS).
+        if self.pending_play_pause_toggle {
+            self.pending_play_pause_toggle = false;
+            if self.playback.is_playing {
+                self.pause_both(ctx);
+            } else {
+                self.play_both(ctx);
+            }
+        }
+        // Process deferred key action (arrows, Home, Y, L, Num1–9, R, S) so we never call ctx or decoder from inside ctx.input().
+        match std::mem::take(&mut self.pending_key_action) {
+            PendingKeyAction::None => {}
+            PendingKeyAction::StepFwd => self.do_step_fwd_inner(ctx),
+            PendingKeyAction::StepBck => self.do_step_bck_inner(ctx),
+            PendingKeyAction::Seek(t) => self.do_seek_inner(t, ctx),
+            PendingKeyAction::CycleMode => {
+                self.view.mode = match self.view.mode {
+                    CompareMode::SplitScreen => CompareMode::AbsDiff,
+                    CompareMode::AbsDiff => CompareMode::Heatmap,
+                    CompareMode::Heatmap => CompareMode::SideBySide,
+                    CompareMode::SideBySide => CompareMode::SplitScreen,
+                };
+                ctx.request_repaint();
+            }
+            PendingKeyAction::SideBySide => {
+                self.view.mode = CompareMode::SideBySide;
+                ctx.request_repaint();
+            }
+            PendingKeyAction::SplitPos0 => {
+                self.view.mode = CompareMode::SplitScreen;
+                self.view.split_pos = if self.view.split_pos < 0.05 { 0.5 } else { 0.0 };
+                ctx.request_repaint();
+            }
+            PendingKeyAction::SplitPos1 => {
+                self.view.mode = CompareMode::SplitScreen;
+                self.view.split_pos = if self.view.split_pos > 0.95 { 0.5 } else { 1.0 };
+                ctx.request_repaint();
+            }
+            PendingKeyAction::ToggleHud => {
+                self.view.show_hud = !self.view.show_hud;
+            }
+            PendingKeyAction::Zoom(z) => {
+                self.view.zoom = z;
+            }
+            PendingKeyAction::ResetZoomPan => {
+                self.view.zoom = 1.0;
+                self.view.pan_u = 0.0;
+                self.view.pan_v = 0.0;
+            }
+            PendingKeyAction::SwapVideos => self.swap_videos_inner(ctx),
         }
         log::info!("App::update() called");
         // First frame: don't request repaint so macOS can finish present.
@@ -672,64 +758,49 @@ impl eframe::App for DiffPlayerApp {
         // ── Keyboard shortcuts ──────────────────────────────────────────────
         ctx.input(|i| {
             if i.key_pressed(egui::Key::Space) {
-                if self.playback.is_playing {
-                    self.pause_both(ctx);
-                } else {
-                    self.play_both(ctx);
-                }
+                self.pending_play_pause_toggle = true;
             }
             if i.key_pressed(egui::Key::ArrowRight) {
-                self.do_step_fwd(ctx);
+                self.pending_key_action = PendingKeyAction::StepFwd;
             }
             if i.key_pressed(egui::Key::ArrowLeft) {
-                self.do_step_bck(ctx);
+                self.pending_key_action = PendingKeyAction::StepBck;
             }
             if i.key_pressed(egui::Key::Home) {
-                self.do_seek(0.0, ctx);
+                self.pending_key_action = PendingKeyAction::Seek(0.0);
             }
             if i.key_pressed(egui::Key::Y) {
-                self.view.mode = match self.view.mode {
-                    CompareMode::SplitScreen => CompareMode::AbsDiff,
-                    CompareMode::AbsDiff => CompareMode::Heatmap,
-                    CompareMode::Heatmap => CompareMode::SideBySide,
-                    CompareMode::SideBySide => CompareMode::SplitScreen,
-                };
-                ctx.request_repaint();
+                self.pending_key_action = PendingKeyAction::CycleMode;
             }
             if i.key_pressed(egui::Key::L) {
-                self.view.mode = CompareMode::SideBySide;
-                ctx.request_repaint();
+                self.pending_key_action = PendingKeyAction::SideBySide;
             }
             if i.key_pressed(egui::Key::Num1) {
-                self.view.mode = CompareMode::SplitScreen;
-                self.view.split_pos = if self.view.split_pos < 0.05 { 0.5 } else { 0.0 };
-                ctx.request_repaint();
+                self.pending_key_action = PendingKeyAction::SplitPos0;
             }
             if i.key_pressed(egui::Key::Num2) {
-                self.view.mode = CompareMode::SplitScreen;
-                self.view.split_pos = if self.view.split_pos > 0.95 { 0.5 } else { 1.0 };
-                ctx.request_repaint();
+                self.pending_key_action = PendingKeyAction::SplitPos1;
             }
             if i.key_pressed(egui::Key::Num3) {
-                self.view.show_hud = !self.view.show_hud;
+                self.pending_key_action = PendingKeyAction::ToggleHud;
             }
             if i.key_pressed(egui::Key::Num4) {
-                self.view.zoom = 1.0;
+                self.pending_key_action = PendingKeyAction::Zoom(1.0);
             }
             if i.key_pressed(egui::Key::Num5) {
-                self.view.zoom = 0.5;
+                self.pending_key_action = PendingKeyAction::Zoom(0.5);
             }
             if i.key_pressed(egui::Key::Num6) {
-                self.view.zoom = 1.0;
+                self.pending_key_action = PendingKeyAction::Zoom(1.0);
             }
             if i.key_pressed(egui::Key::Num7) {
-                self.view.zoom = 2.0;
+                self.pending_key_action = PendingKeyAction::Zoom(2.0);
             }
             if i.key_pressed(egui::Key::Num8) {
-                self.view.zoom = 4.0;
+                self.pending_key_action = PendingKeyAction::Zoom(4.0);
             }
             if i.key_pressed(egui::Key::Num9) {
-                self.view.zoom = 8.0;
+                self.pending_key_action = PendingKeyAction::Zoom(8.0);
             }
             if i.key_pressed(egui::Key::F) {
                 log::info!("DEBUG: Key 'F' pressed. Triggering xcap OS-native capture.");
@@ -777,28 +848,26 @@ impl eframe::App for DiffPlayerApp {
                 });
             }
             if i.key_pressed(egui::Key::R) {
-                self.view.zoom = 1.0;
-                self.view.pan_u = 0.0;
-                self.view.pan_v = 0.0;
+                self.pending_key_action = PendingKeyAction::ResetZoomPan;
             }
             if i.key_pressed(egui::Key::S) {
-                self.swap_videos(ctx);
+                self.pending_key_action = PendingKeyAction::SwapVideos;
             }
 
             // ── Precise continuous frame stepping (Keyboard Repeat) ─────────
+            // Only set pending for repeat when (now - last_step_time) > repeat_delay (250ms), so we
+            // don't queue a second step on the very next frame after the first press (fixes "steps by two").
             let now = i.time; // use i from this closure — do not call ctx.input() again (deadlock on macOS)
-            let repeat_delay = 0.25; // 250ms initial delay
-            let repeat_interval = 0.05; // 50ms interval (20 fps)
+            let repeat_delay = 0.25; // 250ms before first repeat
+            let repeat_interval = 0.05; // 50ms between subsequent repeats
 
             if i.key_down(egui::Key::ArrowRight) {
                 if i.key_pressed(egui::Key::ArrowRight)
                     || (now - self.last_step_time) > repeat_interval
                 {
-                    if i.key_pressed(egui::Key::ArrowRight)
-                        || (now - self.last_step_time) > repeat_delay
-                        || self.last_step_time > 0.0
-                    {
-                        self.do_step_fwd(ctx);
+                    let delay_ok = (now - self.last_step_time) > repeat_delay;
+                    if i.key_pressed(egui::Key::ArrowRight) || delay_ok {
+                        self.pending_key_action = PendingKeyAction::StepFwd;
                         self.last_step_time = now;
                     }
                 }
@@ -806,11 +875,9 @@ impl eframe::App for DiffPlayerApp {
                 if i.key_pressed(egui::Key::ArrowLeft)
                     || (now - self.last_step_time) > repeat_interval
                 {
-                    if i.key_pressed(egui::Key::ArrowLeft)
-                        || (now - self.last_step_time) > repeat_delay
-                        || self.last_step_time > 0.0
-                    {
-                        self.do_step_bck(ctx);
+                    let delay_ok = (now - self.last_step_time) > repeat_delay;
+                    if i.key_pressed(egui::Key::ArrowLeft) || delay_ok {
+                        self.pending_key_action = PendingKeyAction::StepBck;
                         self.last_step_time = now;
                     }
                 }
@@ -1513,19 +1580,29 @@ impl DiffPlayerApp {
     pub fn open_video_b_from_path(&mut self, path: String, ctx: &egui::Context) {
         self.open_video_from_path(path, Channel::B, ctx);
     }
-    pub fn do_play(&mut self, ctx: &egui::Context) {
-        self.play_both(ctx);
+    pub fn do_play(&mut self, _ctx: &egui::Context) {
+        self.pending_play_pause_toggle = true;
     }
-    pub fn do_pause(&mut self, ctx: &egui::Context) {
-        self.pause_both(ctx);
+    pub fn do_pause(&mut self, _ctx: &egui::Context) {
+        self.pending_play_pause_toggle = true;
     }
-    pub fn do_step_fwd(&mut self, ctx: &egui::Context) {
+    /// Enqueue step forward; processed at start of next update (avoids re-entrancy from keyboard/UI).
+    pub fn do_step_fwd(&mut self, _ctx: &egui::Context) {
+        self.pending_key_action = PendingKeyAction::StepFwd;
+    }
+    /// Enqueue step back; processed at start of next update (avoids re-entrancy from keyboard/UI).
+    pub fn do_step_bck(&mut self, _ctx: &egui::Context) {
+        self.pending_key_action = PendingKeyAction::StepBck;
+    }
+    /// Called from start of update() when pending_key_action was StepFwd.
+    fn do_step_fwd_inner(&mut self, ctx: &egui::Context) {
         if self.playback.is_playing {
             self.pause_both(ctx);
         }
         self.step_forward(ctx);
     }
-    pub fn do_step_bck(&mut self, ctx: &egui::Context) {
+    /// Called from start of update() when pending_key_action was StepBck.
+    fn do_step_bck_inner(&mut self, ctx: &egui::Context) {
         if self.playback.is_playing {
             self.pause_both(ctx);
         }
@@ -1535,9 +1612,12 @@ impl DiffPlayerApp {
             _ => 25.0,
         };
         let t = (self.playback.current_pts - 1.0 / fps).max(0.0);
-        self.do_seek(t, ctx);
+        self.do_seek_inner(t, ctx);
     }
     pub fn do_seek(&mut self, t: f64, ctx: &egui::Context) {
+        self.do_seek_inner(t, ctx);
+    }
+    fn do_seek_inner(&mut self, t: f64, ctx: &egui::Context) {
         crate::trace_log::log(&format!("Seek to {:.3}s", t));
         self.seek_both(t, ctx);
         self.playback.current_pts = t;
