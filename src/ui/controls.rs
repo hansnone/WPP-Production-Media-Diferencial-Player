@@ -3,7 +3,7 @@
 use egui::{Color32, RichText, Ui};
 
 use crate::app::DiffPlayerApp;
-use crate::types::{CompareMode, Language};
+use crate::types::{CompareMode, Language, SafeZoneMode};
 use crate::ui::theme::apply_theme;
 
 /// Renders the full menu bar: classic dropdown menus followed by an inline
@@ -354,26 +354,55 @@ pub fn show_menu_bar(ui: &mut Ui, app: &mut DiffPlayerApp) {
                     .size(10.0),
                 );
                 ui.separator();
-                let mut ebu = app.view().show_ebu_overlay;
+                ui.label(
+                    RichText::new(match app.view().lang {
+                        Language::Es => "Zonas seguras",
+                        Language::En => "Safe Zones",
+                        Language::Quenya => "Safe zones",
+                    })
+                    .weak()
+                    .size(10.0),
+                );
+                let mut safe_zone = app.view().safe_zone;
                 if ui
-                    .checkbox(
-                        &mut ebu,
+                    .radio_value(
+                        &mut safe_zone,
+                        SafeZoneMode::None,
                         match app.view().lang {
-                            Language::Es => "Overlay EBU (áreas seguras)",
-                            Language::En => "EBU Safe Overlay",
-                            Language::Quenya => "EBU overlay",
+                            Language::Es => "Desactivado",
+                            Language::En => "Off",
+                            Language::Quenya => "Off",
                         },
                     )
-                    .on_hover_text(match app.view().lang {
-                        Language::Es => "Title Safe 90%, Action Safe 93%, cruz central",
-                        Language::En => "Title Safe 90%, Action Safe 93%, centre cross",
-                        Language::Quenya => "EBU safe areas",
-                    })
                     .clicked()
                 {
-                    app.view_mut().show_ebu_overlay = ebu;
                     ui.close_menu();
                 }
+                if ui
+                    .radio_value(
+                        &mut safe_zone,
+                        SafeZoneMode::TvEbu,
+                        "TV: EBU R95 (16:9)",
+                    )
+                    .clicked()
+                {
+                    ui.close_menu();
+                }
+                if ui
+                    .radio_value(
+                        &mut safe_zone,
+                        SafeZoneMode::Social,
+                        match app.view().lang {
+                            Language::Es => "Móvil: Redes Sociales (9:16)",
+                            Language::En => "Mobile: Social (9:16)",
+                            Language::Quenya => "Social (9:16)",
+                        },
+                    )
+                    .clicked()
+                {
+                    ui.close_menu();
+                }
+                app.view_mut().safe_zone = safe_zone;
             },
         );
 
@@ -909,13 +938,17 @@ pub fn show_audio_panel(ui: &mut Ui, app: &mut DiffPlayerApp) {
                 .strong(),
         );
         let mut mute_a = app.view().mute_a;
-        if ui
-            .button(if mute_a { "Mute On" } else { "Mute Off" })
-            .clicked()
-        {
+        let resp_a = ui.button(if mute_a { "Unmute" } else { "Mute" });
+        if resp_a.clicked() {
             mute_a = !mute_a;
             app.view_mut().mute_a = mute_a;
+            ui.ctx().request_repaint();
         }
+        resp_a.on_hover_text(if mute_a {
+            "Canal A silenciado (clic para activar)"
+        } else {
+            "Canal A con sonido (clic para silenciar)"
+        });
         ui.add_space(5.0);
         let mut vol_a = app.view().vol_a;
         if ui
@@ -952,13 +985,17 @@ pub fn show_audio_panel(ui: &mut Ui, app: &mut DiffPlayerApp) {
                 .strong(),
         );
         let mut mute_b = app.view().mute_b;
-        if ui
-            .button(if mute_b { "Mute On" } else { "Mute Off" })
-            .clicked()
-        {
+        let resp_b = ui.button(if mute_b { "Unmute" } else { "Mute" });
+        if resp_b.clicked() {
             mute_b = !mute_b;
             app.view_mut().mute_b = mute_b;
+            ui.ctx().request_repaint();
         }
+        resp_b.on_hover_text(if mute_b {
+            "Canal B silenciado (clic para activar)"
+        } else {
+            "Canal B con sonido (clic para silenciar)"
+        });
         ui.add_space(5.0);
         let mut vol_b = app.view().vol_b;
         if ui

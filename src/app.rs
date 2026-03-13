@@ -8,7 +8,7 @@ use crate::decoder;
 use crate::renderer::{RenderCallback, ShaderUniforms, VideoRenderer};
 use crate::types::{
     AudioFrame, Channel, ColorMetadata, CompareMode, DecoderCommand, DiffMode, Language,
-    PlaybackState, VideoFrame,
+    PlaybackState, SafeZoneMode, VideoFrame,
 };
 use rodio::{OutputStream, Sink};
 use std::path::PathBuf;
@@ -44,8 +44,8 @@ pub struct ViewState {
     pub vol_b: f32,
     /// Split curtain orientation: false = vertical (X), true = horizontal (Y).
     pub split_horizontal: bool,
-    /// EBU safe-area overlay (Title Safe, Action Safe, centre cross).
-    pub show_ebu_overlay: bool,
+    /// Safe zone overlay: None, TV (EBU R95), or Social (9:16).
+    pub safe_zone: crate::types::SafeZoneMode,
     /// Current audio level 0..1 for channel A (not persisted).
     #[serde(skip, default)]
     pub audio_level_a: f32,
@@ -135,7 +135,7 @@ impl Default for ViewState {
             vol_a: 1.0,
             vol_b: 1.0,
             split_horizontal: false,
-            show_ebu_overlay: false,
+            safe_zone: crate::types::SafeZoneMode::None,
             audio_level_a: 0.0,
             audio_level_b: 0.0,
         }
@@ -1093,52 +1093,127 @@ fn show_canvas(ui: &mut egui::Ui, app: &mut DiffPlayerApp, _frame: &mut eframe::
             .rect_filled(available, 0.0, egui::Color32::from_rgb(0, 0, 0));
     }
 
-    // -- EBU overlay (Title Safe 90%, Action Safe 93%, centre cross) --------
-    if app.view.show_ebu_overlay {
-        let w = available.width();
-        let h = available.height();
-        let stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(0, 200, 255));
-        let action_margin = 0.035; // 93% area
-        let action_rect = egui::Rect::from_min_max(
-            egui::Pos2::new(
-                available.left() + w * action_margin,
-                available.top() + h * action_margin,
-            ),
-            egui::Pos2::new(
-                available.right() - w * action_margin,
-                available.bottom() - h * action_margin,
-            ),
-        );
-        ui.painter().rect_stroke(action_rect, 0.0, stroke);
-        let title_margin = 0.05; // 90% area
-        let title_rect = egui::Rect::from_min_max(
-            egui::Pos2::new(
-                available.left() + w * title_margin,
-                available.top() + h * title_margin,
-            ),
-            egui::Pos2::new(
-                available.right() - w * title_margin,
-                available.bottom() - h * title_margin,
-            ),
-        );
-        ui.painter().rect_stroke(title_rect, 0.0, stroke);
-        let cx = available.center().x;
-        let cy = available.center().y;
-        let cross_half = 10.0;
-        ui.painter().line_segment(
-            [
-                egui::Pos2::new(cx - cross_half, cy),
-                egui::Pos2::new(cx + cross_half, cy),
-            ],
-            stroke,
-        );
-        ui.painter().line_segment(
-            [
-                egui::Pos2::new(cx, cy - cross_half),
-                egui::Pos2::new(cx, cy + cross_half),
-            ],
-            stroke,
-        );
+    // -- Safe zones overlay (video_rect + zoom/pan) -------------------------
+    // In SideBySide mode draw on both halves (A left, B right); otherwise once on full canvas.
+    if app.view.safe_zone != SafeZoneMode::None {
+        let zoom = app.view.zoom;
+        let visible_left = 0.5 - 0.5 / zoom + app.view.pan_u;
+        let visible_right = 0.5 + 0.5 / zoom + app.view.pan_u;
+        let visible_top = 0.5 - 0.5 / zoom + app.view.pan_v;
+        let visible_bottom = 0.5 + 0.5 / zoom + app.view.pan_v;
+
+        let draw_safe_zones = |container: egui::Rect, vw: f32, vh: f32| {
+            let cw = container.width();
+            let ch = container.height();
+            let video_aspect = vw / vh;
+            let container_aspect = cw / ch;
+            let video_rect = if video_aspect >= container_aspect {
+                let h = cw / video_aspect;
+                let top = container.center().y - h * 0.5;
+                egui::Rect::from_min_max(
+                    egui::Pos2::new(container.left(), top),
+                    egui::Pos2::new(container.right(), top + h),
+                )
+            } else {
+                let w = ch * video_aspect;
+                let left = container.center().x - w * 0.5;
+                egui::Rect::from_min_max(
+                    egui::Pos2::new(left, container.top()),
+                    egui::Pos2::new(left + w, container.bottom()),
+                )
+            };
+            let uv_to_screen = |u: f32, v: f32| {
+                let x = video_rect.left()
+                    + (u - visible_left) / (visible_right - visible_left) * video_rect.width();
+                let y = video_rect.top()
+                    + (v - visible_top) / (visible_bottom - visible_top) * video_rect.height();
+                egui::Pos2::new(x, y)
+            };
+
+            match app.view.safe_zone {
+                SafeZoneMode::None => {}
+                SafeZoneMode::TvEbu => {
+                    let stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(0, 200, 255));
+                    let action_min = uv_to_screen(0.035, 0.035);
+                    let action_max = uv_to_screen(0.965, 0.965);
+                    let action_rect = egui::Rect::from_min_max(action_min, action_max);
+                    ui.painter().rect_stroke(action_rect, 0.0, stroke);
+                    let title_min = uv_to_screen(0.10, 0.05);
+                    let title_max = uv_to_screen(0.90, 0.95);
+                    let title_rect = egui::Rect::from_min_max(title_min, title_max);
+                    ui.painter().rect_stroke(title_rect, 0.0, stroke);
+                    let center = uv_to_screen(0.5, 0.5);
+                    let cross_half = 10.0;
+                    ui.painter().line_segment(
+                        [
+                            egui::Pos2::new(center.x - cross_half, center.y),
+                            egui::Pos2::new(center.x + cross_half, center.y),
+                        ],
+                        stroke,
+                    );
+                    ui.painter().line_segment(
+                        [
+                            egui::Pos2::new(center.x, center.y - cross_half),
+                            egui::Pos2::new(center.x, center.y + cross_half),
+                        ],
+                        stroke,
+                    );
+                }
+                SafeZoneMode::Social => {
+                    let danger_fill = egui::Color32::from_black_alpha(150);
+                    let top_danger = egui::Rect::from_min_max(
+                        uv_to_screen(0.0, 0.0),
+                        uv_to_screen(1.0, 0.15),
+                    );
+                    let bottom_danger = egui::Rect::from_min_max(
+                        uv_to_screen(0.0, 0.78),
+                        uv_to_screen(1.0, 1.0),
+                    );
+                    let right_danger = egui::Rect::from_min_max(
+                        uv_to_screen(0.85, 0.0),
+                        uv_to_screen(1.0, 1.0),
+                    );
+                    let left_danger = egui::Rect::from_min_max(
+                        uv_to_screen(0.0, 0.0),
+                        uv_to_screen(0.05, 1.0),
+                    );
+                    ui.painter().rect_filled(top_danger, 0.0, danger_fill);
+                    ui.painter().rect_filled(bottom_danger, 0.0, danger_fill);
+                    ui.painter().rect_filled(right_danger, 0.0, danger_fill);
+                    ui.painter().rect_filled(left_danger, 0.0, danger_fill);
+                    let safe_min = uv_to_screen(0.05, 0.15);
+                    let safe_max = uv_to_screen(0.85, 0.78);
+                    let safe_rect = egui::Rect::from_min_max(safe_min, safe_max);
+                    let stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(0, 200, 0));
+                    ui.painter().rect_stroke(safe_rect, 0.0, stroke);
+                }
+            }
+        };
+
+        if app.view.mode == CompareMode::SideBySide {
+            let mid_x = available.center().x;
+            let left_rect =
+                egui::Rect::from_min_max(available.min, egui::pos2(mid_x, available.max.y));
+            let right_rect =
+                egui::Rect::from_min_max(egui::pos2(mid_x, available.min.y), available.max);
+            let (vw_a, vh_a) = app
+                .decoder_a_meta()
+                .map(|m| (m.width as f32, m.height as f32))
+                .unwrap_or((16.0, 9.0));
+            let (vw_b, vh_b) = app
+                .decoder_b_meta()
+                .map(|m| (m.width as f32, m.height as f32))
+                .unwrap_or((16.0, 9.0));
+            draw_safe_zones(left_rect, vw_a, vh_a);
+            draw_safe_zones(right_rect, vw_b, vh_b);
+        } else {
+            let (vw, vh) = app
+                .decoder_a_meta()
+                .or_else(|| app.decoder_b_meta())
+                .map(|m| (m.width as f32, m.height as f32))
+                .unwrap_or((16.0, 9.0));
+            draw_safe_zones(available, vw, vh);
+        }
     }
 
     // -- OS file drag-and-drop handling ------------------------------------

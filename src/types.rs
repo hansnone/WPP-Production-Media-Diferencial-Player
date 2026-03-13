@@ -79,6 +79,17 @@ impl Default for CompareMode {
     }
 }
 
+/// Safe zone overlay mode: none, TV (EBU R95), or social/mobile (9:16).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum SafeZoneMode {
+    #[default]
+    None,
+    /// TV 16:9 — Action Safe 93%, Title Safe (5% top/bottom, 10% sides), centre cross.
+    TvEbu,
+    /// Social 9:16 — Safe zone + danger zones (top 15%, bottom 22%, right 15%, left 5%) shaded.
+    Social,
+}
+
 /// The specific algorithm used when evaluating `CompareMode::AbsDiff`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u32)]
