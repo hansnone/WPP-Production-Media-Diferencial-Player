@@ -42,6 +42,16 @@ pub struct ViewState {
     pub mute_b: bool,
     pub vol_a: f32,
     pub vol_b: f32,
+    /// Split curtain orientation: false = vertical (X), true = horizontal (Y).
+    pub split_horizontal: bool,
+    /// EBU safe-area overlay (Title Safe, Action Safe, centre cross).
+    pub show_ebu_overlay: bool,
+    /// Current audio level 0..1 for channel A (not persisted).
+    #[serde(skip, default)]
+    pub audio_level_a: f32,
+    /// Current audio level 0..1 for channel B (not persisted).
+    #[serde(skip, default)]
+    pub audio_level_b: f32,
 }
 
 impl ViewState {
@@ -124,6 +134,10 @@ impl Default for ViewState {
             mute_b: true,
             vol_a: 1.0,
             vol_b: 1.0,
+            split_horizontal: false,
+            show_ebu_overlay: false,
+            audio_level_a: 0.0,
+            audio_level_b: 0.0,
         }
     }
 }
@@ -196,10 +210,6 @@ impl DiffPlayerApp {
 
         log::info!("Inicializando Audio en el hilo principal...");
 
-        // --- PRUEBA FORENSE: DESACTIVAR AUDIO TEMPORALMENTE ---
-        log::info!("Saltando inicialización de Audio por ahora...");
-
-        /*
         let (audio_stream, sink_a, sink_b) = match rodio::OutputStream::try_default() {
             Ok((stream, handle)) => {
                 let s_a = rodio::Sink::try_new(&handle).ok();
@@ -215,7 +225,9 @@ impl DiffPlayerApp {
                 (None, None, None)
             }
         };
-        */
+        if sink_a.is_some() && sink_b.is_some() {
+            log::info!("Audio inicializado correctamente (canales A y B).");
+        }
 
         crate::trace_log::log("App initialized");
 
@@ -229,9 +241,9 @@ impl DiffPlayerApp {
             dragging_split: false,
             drag_drop_hover_pos: None,
 
-            _audio_stream: None,
-            sink_a: None,
-            sink_b: None,
+            _audio_stream: audio_stream,
+            sink_a,
+            sink_b,
 
             error_title: None,
             error_message: None,
@@ -287,7 +299,7 @@ impl DiffPlayerApp {
                         // No need for repaint here as do_seek handles it
                     }
                     Channel::B => {
-                        if let Some(old) = self.decoder_a.take() {
+                        if let Some(old) = self.decoder_b.take() {
                             let _ = old.cmd_tx.send(DecoderCommand::Stop);
                         }
                         self.playback.duration_b = handle.meta.duration_secs;
@@ -426,6 +438,7 @@ impl DiffPlayerApp {
             scale_u,
             scale_v,
             bg_color: self.view.canvas_bg_color,
+            split_horizontal: if self.view.split_horizontal { 1 } else { 0 },
         };
     }
 
@@ -550,18 +563,26 @@ impl eframe::App for DiffPlayerApp {
                     }
                 }
             }
-            // Schedule next repaint at next video frame boundary to avoid saturating at max monitor Hz
+            // Schedule next repaint. Use shorter interval when audio is active so we drain audio_rx
+            // often enough (rodio needs frequent feeding to avoid underruns and crackling).
             if !is_first_frame {
                 let fps = self
                     .decoder_a_meta()
                     .or_else(|| self.decoder_b_meta())
                     .map(|m| m.fps)
                     .unwrap_or(25.0);
+                let max_delay_ms = if self.sink_a.is_some() || self.sink_b.is_some() {
+                    8u64 // Audio active: repaint at least every 8ms to keep sink fed (smooth playback)
+                } else {
+                    100u64
+                };
                 if fps > 0.0 {
                     let next_frame_pts = (self.playback.current_pts * fps).ceil() / fps;
                     let delay_secs = (next_frame_pts - self.playback.current_pts).max(0.0);
-                    let delay = Duration::from_secs_f64(delay_secs)
-                        .clamp(Duration::from_millis(1), Duration::from_millis(100));
+                    let delay = Duration::from_secs_f64(delay_secs).clamp(
+                        Duration::from_millis(1),
+                        Duration::from_millis(max_delay_ms),
+                    );
                     ctx.request_repaint_after(delay);
                 } else {
                     ctx.request_repaint();
@@ -578,11 +599,19 @@ impl eframe::App for DiffPlayerApp {
             }
             self.sync_uniforms();
         }
-        // Drain Audio
+        // Drain Audio and update level meters (peak + decay)
+        const LEVEL_DECAY: f32 = 0.92;
         if self.playback.is_playing {
+            let mut received_a = false;
+            let mut received_b = false;
             if let Some(dec) = &mut self.decoder_a {
                 if let Some(sink) = &self.sink_a {
                     while let Ok(audio) = dec.audio_rx.try_recv() {
+                        received_a = true;
+                        let peak = audio.samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+                        self.view.audio_level_a = (self.view.audio_level_a * LEVEL_DECAY + peak)
+                            .max(peak)
+                            .min(1.0);
                         let buf = rodio::buffer::SamplesBuffer::new(
                             audio.channels,
                             audio.sample_rate,
@@ -592,9 +621,17 @@ impl eframe::App for DiffPlayerApp {
                     }
                 }
             }
+            if !received_a {
+                self.view.audio_level_a *= LEVEL_DECAY;
+            }
             if let Some(dec) = &mut self.decoder_b {
                 if let Some(sink) = &self.sink_b {
                     while let Ok(audio) = dec.audio_rx.try_recv() {
+                        received_b = true;
+                        let peak = audio.samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+                        self.view.audio_level_b = (self.view.audio_level_b * LEVEL_DECAY + peak)
+                            .max(peak)
+                            .min(1.0);
                         let buf = rodio::buffer::SamplesBuffer::new(
                             audio.channels,
                             audio.sample_rate,
@@ -603,6 +640,9 @@ impl eframe::App for DiffPlayerApp {
                         sink.append(buf);
                     }
                 }
+            }
+            if !received_b {
+                self.view.audio_level_b *= LEVEL_DECAY;
             }
         }
 
@@ -801,6 +841,7 @@ impl eframe::App for DiffPlayerApp {
             egui::SidePanel::right("audio_panel")
                 .resizable(false)
                 .default_width(60.0)
+                .max_width(100.0)
                 .show(ctx, |ui| {
                     crate::ui::controls::show_audio_panel(ui, self);
                 });
@@ -966,16 +1007,20 @@ fn show_canvas(ui: &mut egui::Ui, app: &mut DiffPlayerApp, _frame: &mut eframe::
 
     // -- Drag to pan OR drag split line (Available in all modes) -------------
     // Pan is only active when zoomed in (zoom > 1.0). At fit-to-frame only the
-    // split divider can be dragged.
+    // split divider can be dragged. Split line is vertical or horizontal per split_horizontal.
     if response.drag_started() {
         let pos = response.interact_pointer_pos().unwrap_or_default();
-        let split_x = available.left() + app.view.split_pos * available.width();
-
-        if (pos.x - split_x).abs() < 15.0 {
+        let near_split = if app.view.split_horizontal {
+            let split_y = available.top() + app.view.split_pos * available.height();
+            (pos.y - split_y).abs() < 15.0
+        } else {
+            let split_x = available.left() + app.view.split_pos * available.width();
+            (pos.x - split_x).abs() < 15.0
+        };
+        if near_split {
             app.dragging_split = true;
         } else {
             app.dragging_split = false;
-            // Only allow panning when zoomed in
             if app.view.zoom > 1.0 {
                 app.drag_start = Some((pos, app.view.pan_u, app.view.pan_v));
             }
@@ -985,8 +1030,13 @@ fn show_canvas(ui: &mut egui::Ui, app: &mut DiffPlayerApp, _frame: &mut eframe::
     if response.dragged() {
         if app.dragging_split {
             let pos = response.interact_pointer_pos().unwrap_or_default();
-            let relative_x = (pos.x - available.left()) / available.width();
-            app.view.split_pos = relative_x.clamp(0.0, 1.0);
+            if app.view.split_horizontal {
+                let relative_y = (pos.y - available.top()) / available.height();
+                app.view.split_pos = relative_y.clamp(0.0, 1.0);
+            } else {
+                let relative_x = (pos.x - available.left()) / available.width();
+                app.view.split_pos = relative_x.clamp(0.0, 1.0);
+            }
             ui.ctx().request_repaint();
         } else if let Some((start_pos, start_pu, start_pv)) = app.drag_start {
             let delta = response.interact_pointer_pos().unwrap_or_default() - start_pos;
@@ -1005,9 +1055,19 @@ fn show_canvas(ui: &mut egui::Ui, app: &mut DiffPlayerApp, _frame: &mut eframe::
 
     // -- Cursor hint for dragging split (Available in all modes) ------------
     if let Some(ptr) = ui.ctx().pointer_hover_pos() {
-        let split_x = available.left() + app.view.split_pos * available.width();
-        if available.contains(ptr) && (ptr.x - split_x).abs() < 10.0 {
-            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+        let near_split = if app.view.split_horizontal {
+            let split_y = available.top() + app.view.split_pos * available.height();
+            available.contains(ptr) && (ptr.y - split_y).abs() < 10.0
+        } else {
+            let split_x = available.left() + app.view.split_pos * available.width();
+            available.contains(ptr) && (ptr.x - split_x).abs() < 10.0
+        };
+        if near_split {
+            ui.ctx().set_cursor_icon(if app.view.split_horizontal {
+                egui::CursorIcon::ResizeVertical
+            } else {
+                egui::CursorIcon::ResizeHorizontal
+            });
         }
     }
 
@@ -1031,6 +1091,54 @@ fn show_canvas(ui: &mut egui::Ui, app: &mut DiffPlayerApp, _frame: &mut eframe::
     } else {
         ui.painter()
             .rect_filled(available, 0.0, egui::Color32::from_rgb(0, 0, 0));
+    }
+
+    // -- EBU overlay (Title Safe 90%, Action Safe 93%, centre cross) --------
+    if app.view.show_ebu_overlay {
+        let w = available.width();
+        let h = available.height();
+        let stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(0, 200, 255));
+        let action_margin = 0.035; // 93% area
+        let action_rect = egui::Rect::from_min_max(
+            egui::Pos2::new(
+                available.left() + w * action_margin,
+                available.top() + h * action_margin,
+            ),
+            egui::Pos2::new(
+                available.right() - w * action_margin,
+                available.bottom() - h * action_margin,
+            ),
+        );
+        ui.painter().rect_stroke(action_rect, 0.0, stroke);
+        let title_margin = 0.05; // 90% area
+        let title_rect = egui::Rect::from_min_max(
+            egui::Pos2::new(
+                available.left() + w * title_margin,
+                available.top() + h * title_margin,
+            ),
+            egui::Pos2::new(
+                available.right() - w * title_margin,
+                available.bottom() - h * title_margin,
+            ),
+        );
+        ui.painter().rect_stroke(title_rect, 0.0, stroke);
+        let cx = available.center().x;
+        let cy = available.center().y;
+        let cross_half = 10.0;
+        ui.painter().line_segment(
+            [
+                egui::Pos2::new(cx - cross_half, cy),
+                egui::Pos2::new(cx + cross_half, cy),
+            ],
+            stroke,
+        );
+        ui.painter().line_segment(
+            [
+                egui::Pos2::new(cx, cy - cross_half),
+                egui::Pos2::new(cx, cy + cross_half),
+            ],
+            stroke,
+        );
     }
 
     // -- OS file drag-and-drop handling ------------------------------------

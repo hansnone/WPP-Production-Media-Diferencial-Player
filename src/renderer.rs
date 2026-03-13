@@ -31,6 +31,8 @@ pub struct ShaderUniforms {
 
     pub scale_v: f32,
     pub bg_color: [f32; 3],
+    /// 0 = vertical curtain (split on X), 1 = horizontal curtain (split on Y)
+    pub split_horizontal: u32,
 }
 
 impl Default for ShaderUniforms {
@@ -46,6 +48,7 @@ impl Default for ShaderUniforms {
             scale_u: 1.0,
             scale_v: 1.0,
             bg_color: [0.0, 0.0, 0.0],
+            split_horizontal: 0,
         }
     }
 }

@@ -4,19 +4,20 @@
 //  Uniform buffer (must match ShaderUniforms in renderer.rs)
 // ---------------------------------------------------------------------------
 struct Uniforms {
-    split_pos:  f32,
-    mode:       u32,
-    diff_mode:  u32,
-    amplifier:  f32,
-    zoom:       f32,
-    pan_u:      f32,
-    pan_v:      f32,
-    scale_u:    f32,
-    scale_v:    f32,
-    bg_r:       f32,
-    bg_g:       f32,
-    bg_b:       f32,
-};
+    split_pos:        f32,
+    mode:             u32,
+    diff_mode:        u32,
+    amplifier:        f32,
+    zoom:             f32,
+    pan_u:            f32,
+    pan_v:            f32,
+    scale_u:          f32,
+    scale_v:          f32,
+    bg_r:             f32,
+    bg_g:             f32,
+    bg_b:             f32,
+    split_horizontal: u32,
+}
 
 @group(0) @binding(0) var tex_a:   texture_2d<f32>;
 @group(0) @binding(1) var tex_b:   texture_2d<f32>;
@@ -116,8 +117,13 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     var out_color: vec4<f32>;
 
     let line_half_w = 0.0015;
-    let in_line = abs(in.uv.x - u.split_pos) < line_half_w;
-    let on_left = in.uv.x < u.split_pos;
+    // Curtain orientation: 0 = vertical (split on X), 1 = horizontal (split on Y)
+    let on_left = select(in.uv.x < u.split_pos, in.uv.y < u.split_pos, u.split_horizontal == 1u);
+    let in_line = select(
+        abs(in.uv.x - u.split_pos) < line_half_w,
+        abs(in.uv.y - u.split_pos) < line_half_w,
+        u.split_horizontal == 1u
+    );
 
     if u.mode == 0u {
         // ── 0: Split-Screen (curtain) ──────────────────────────────────────

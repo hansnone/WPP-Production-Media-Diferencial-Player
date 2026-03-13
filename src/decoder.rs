@@ -47,6 +47,66 @@ pub fn spawn_decoder(
 }
 
 // ---------------------------------------------------------------------------
+// Metadata extraction helpers (AVDictionary)
+// ---------------------------------------------------------------------------
+
+/// Read a single metadata value by key from an AVDictionary. Returns empty string if not found or null.
+unsafe fn dict_get(m: *const ffi::AVDictionary, key: &str) -> String {
+    if m.is_null() {
+        return String::new();
+    }
+    let c_key = match CString::new(key) {
+        Ok(k) => k,
+        Err(_) => return String::new(),
+    };
+    let entry = ffi::av_dict_get(m, c_key.as_ptr(), ptr::null_mut(), 0);
+    if entry.is_null() {
+        return String::new();
+    }
+    let val = (*entry).value;
+    if val.is_null() {
+        String::new()
+    } else {
+        CStr::from_ptr(val).to_string_lossy().into_owned()
+    }
+}
+
+/// Iterate all AVDictionary entries and format as "key: value\n" lines.
+unsafe fn dict_to_string(m: *const ffi::AVDictionary) -> String {
+    if m.is_null() {
+        return String::new();
+    }
+    let mut out = String::new();
+    let mut prev = ptr::null_mut::<ffi::AVDictionaryEntry>();
+    loop {
+        let entry = ffi::av_dict_get(m, ptr::null(), prev, 0);
+        if entry.is_null() {
+            break;
+        }
+        let key: String = if (*entry).key.is_null() {
+            String::new()
+        } else {
+            CStr::from_ptr((*entry).key).to_string_lossy().into_owned()
+        };
+        let val: String = if (*entry).value.is_null() {
+            String::new()
+        } else {
+            CStr::from_ptr((*entry).value)
+                .to_string_lossy()
+                .into_owned()
+        };
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(&key);
+        out.push_str(": ");
+        out.push_str(&val);
+        prev = entry;
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
 // Metadata extraction (open file, read stream headers, close)
 // ---------------------------------------------------------------------------
 
@@ -105,6 +165,62 @@ fn extract_metadata(path: &str) -> Result<ColorMetadata> {
             CStr::from_ptr(pix_name).to_string_lossy().into_owned()
         };
 
+        // Video codec name
+        let video_codec = {
+            let name_ptr = ffi::avcodec_get_name(par.codec_id);
+            if name_ptr.is_null() {
+                "unknown".to_owned()
+            } else {
+                CStr::from_ptr(name_ptr).to_string_lossy().into_owned()
+            }
+        };
+
+        // Audio codec name (if present)
+        let audio_codec = {
+            let a_idx = find_audio_stream(streams);
+            if a_idx >= 0 {
+                let a_stream = *streams[a_idx as usize];
+                let a_par = *a_stream.codecpar;
+                let name_ptr = ffi::avcodec_get_name(a_par.codec_id);
+                if name_ptr.is_null() {
+                    "—".to_owned()
+                } else {
+                    CStr::from_ptr(name_ptr).to_string_lossy().into_owned()
+                }
+            } else {
+                "—".to_owned()
+            }
+        };
+
+        // Format-level metadata: major_brand
+        let major_brand = {
+            let s = dict_get((*fmt_ctx).metadata, "major_brand");
+            if s.is_empty() {
+                "—".to_owned()
+            } else {
+                s
+            }
+        };
+
+        // Video stream metadata (Stream #0:0)
+        let video_stream_metadata = dict_to_string(stream.metadata);
+
+        // Audio stream metadata (Stream #0:1) if present
+        let audio_stream_metadata = {
+            let a_idx = find_audio_stream(streams);
+            if a_idx >= 0 {
+                let a_stream = *streams[a_idx as usize];
+                let s = dict_to_string(a_stream.metadata);
+                if s.is_empty() {
+                    "—".to_owned()
+                } else {
+                    s
+                }
+            } else {
+                "—".to_owned()
+            }
+        };
+
         let meta = ColorMetadata {
             colorspace,
             color_transfer,
@@ -115,6 +231,11 @@ fn extract_metadata(path: &str) -> Result<ColorMetadata> {
             fps,
             duration_secs,
             bitrate_kbps: (*fmt_ctx).bit_rate / 1000,
+            video_codec,
+            audio_codec,
+            major_brand,
+            video_stream_metadata,
+            audio_stream_metadata,
         };
 
         ffi::avformat_close_input(&mut fmt_ctx);

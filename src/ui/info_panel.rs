@@ -303,13 +303,71 @@ fn channel_section(
                     if is_es { "Primarios" } else { "Primaries" },
                     &m.color_primaries,
                 );
+                kv(
+                    ui,
+                    if is_es { "Códec video" } else { "Video codec" },
+                    if m.video_codec.is_empty() {
+                        "—"
+                    } else {
+                        m.video_codec.as_str()
+                    },
+                );
+                kv(
+                    ui,
+                    if is_es { "Códec audio" } else { "Audio codec" },
+                    if m.audio_codec.is_empty() {
+                        "—"
+                    } else {
+                        m.audio_codec.as_str()
+                    },
+                );
+                kv(
+                    ui,
+                    if is_es {
+                        "Marca contenedor"
+                    } else {
+                        "Major brand"
+                    },
+                    if m.major_brand.is_empty() || m.major_brand == "—" {
+                        "—"
+                    } else {
+                        m.major_brand.as_str()
+                    },
+                );
+                {
+                    let v = if m.video_stream_metadata.is_empty() {
+                        "—".to_string()
+                    } else {
+                        truncate_meta(&m.video_stream_metadata, 50)
+                    };
+                    kv(ui, "Stream video (meta)", &v);
+                }
+                {
+                    let v = if m.audio_stream_metadata.is_empty() || m.audio_stream_metadata == "—" {
+                        "—".to_string()
+                    } else {
+                        truncate_meta(&m.audio_stream_metadata, 50)
+                    };
+                    kv(ui, "Stream audio (meta)", &v);
+                }
             });
+    }
+}
+
+fn truncate_meta(s: &str, max_len: usize) -> String {
+    let one_line: String = s.replace('\n', " ");
+    if one_line.len() <= max_len {
+        one_line
+    } else {
+        format!("{}…", one_line.chars().take(max_len).collect::<String>())
     }
 }
 
 fn kv(ui: &mut Ui, key: &str, value: &str) {
     ui.label(RichText::new(key).size(10.5).weak());
-    ui.label(RichText::new(value).size(10.5).monospace());
+    ui.add(
+        egui::Label::new(RichText::new(value).size(10.5).monospace()).wrap(true),
+    );
     ui.end_row();
 }
 

@@ -353,6 +353,27 @@ pub fn show_menu_bar(ui: &mut Ui, app: &mut DiffPlayerApp) {
                     .weak()
                     .size(10.0),
                 );
+                ui.separator();
+                let mut ebu = app.view().show_ebu_overlay;
+                if ui
+                    .checkbox(
+                        &mut ebu,
+                        match app.view().lang {
+                            Language::Es => "Overlay EBU (áreas seguras)",
+                            Language::En => "EBU Safe Overlay",
+                            Language::Quenya => "EBU overlay",
+                        },
+                    )
+                    .on_hover_text(match app.view().lang {
+                        Language::Es => "Title Safe 90%, Action Safe 93%, cruz central",
+                        Language::En => "Title Safe 90%, Action Safe 93%, centre cross",
+                        Language::Quenya => "EBU safe areas",
+                    })
+                    .clicked()
+                {
+                    app.view_mut().show_ebu_overlay = ebu;
+                    ui.close_menu();
+                }
             },
         );
 
@@ -574,10 +595,53 @@ pub fn show_menu_bar(ui: &mut Ui, app: &mut DiffPlayerApp) {
         // Contextual slider depending on mode
         match app.view().mode {
             CompareMode::SplitScreen => {
+                let is_h = app.view().split_horizontal;
+                let (label_v, label_h) = match app.view().lang {
+                    Language::Es => ("Cortina V", "Cortina H"),
+                    Language::En => ("Split V", "Split H"),
+                    Language::Quenya => ("Hya V", "Hya H"),
+                };
+                if ui
+                    .button(if is_h { label_h } else { label_v })
+                    .on_hover_text(if is_h {
+                        if app.view().lang == Language::Es {
+                            "Cambiar a cortina vertical"
+                        } else {
+                            "Switch to vertical curtain"
+                        }
+                    } else {
+                        if app.view().lang == Language::Es {
+                            "Cambiar a cortina horizontal"
+                        } else {
+                            "Switch to horizontal curtain"
+                        }
+                    })
+                    .clicked()
+                {
+                    app.view_mut().split_horizontal = !app.view().split_horizontal;
+                }
                 ui.label(match app.view().lang {
-                    Language::Es => "Cortina:",
-                    Language::En => "Split:",
-                    Language::Quenya => "Hya:",
+                    Language::Es => {
+                        if is_h {
+                            "Cortina (Y):"
+                        } else {
+                            "Cortina (X):"
+                        }
+                    }
+                    Language::En => {
+                        if is_h {
+                            "Split (Y):"
+                        } else {
+                            "Split (X):"
+                        }
+                    }
+                    Language::Quenya => {
+                        if is_h {
+                            "Hya (Y):"
+                        } else {
+                            "Hya (X):"
+                        }
+                    }
                 });
                 let mut sp = app.view().split_pos;
                 if ui
@@ -864,6 +928,19 @@ pub fn show_audio_panel(ui: &mut Ui, app: &mut DiffPlayerApp) {
         {
             app.view_mut().vol_a = vol_a;
         }
+        let level_a = app.view().audio_level_a.clamp(0.0, 1.0);
+        let color_a = if level_a < 0.5 {
+            Color32::from_rgb(80, 200, 100)
+        } else if level_a < 0.85 {
+            Color32::from_rgb(220, 180, 0)
+        } else {
+            Color32::from_rgb(220, 60, 60)
+        };
+        ui.add(
+            egui::ProgressBar::new(level_a)
+                .fill(color_a)
+                .desired_width(40.0),
+        );
 
         ui.add_space(20.0);
         ui.separator();
@@ -894,5 +971,18 @@ pub fn show_audio_panel(ui: &mut Ui, app: &mut DiffPlayerApp) {
         {
             app.view_mut().vol_b = vol_b;
         }
+        let level_b = app.view().audio_level_b.clamp(0.0, 1.0);
+        let color_b = if level_b < 0.5 {
+            Color32::from_rgb(80, 160, 220)
+        } else if level_b < 0.85 {
+            Color32::from_rgb(220, 180, 0)
+        } else {
+            Color32::from_rgb(220, 60, 60)
+        };
+        ui.add(
+            egui::ProgressBar::new(level_b)
+                .fill(color_b)
+                .desired_width(40.0),
+        );
     });
 }

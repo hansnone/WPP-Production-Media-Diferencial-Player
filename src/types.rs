@@ -56,6 +56,11 @@ pub struct ColorMetadata {
     pub fps: f64,
     pub duration_secs: f64,
     pub bitrate_kbps: i64,
+    pub video_codec: String,
+    pub audio_codec: String,
+    pub major_brand: String,
+    pub video_stream_metadata: String,
+    pub audio_stream_metadata: String,
 }
 
 /// Current display mode for the comparison shader.
