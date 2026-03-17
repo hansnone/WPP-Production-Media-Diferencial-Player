@@ -27,6 +27,10 @@ pub struct ViewState {
     pub lang: Language,
     pub theme: crate::types::Theme,
     pub show_hud: bool,
+    /// Show left sidebar (video metadata / info).
+    pub show_left_panel: bool,
+    /// Show right sidebar (mode + audio controls).
+    pub show_right_panel: bool,
     pub split_pos: f32,
     pub screenshot_dir: Option<PathBuf>,
     pub amplifier: f32,
@@ -121,6 +125,8 @@ impl Default for ViewState {
             lang: Language::Es,
             theme: crate::types::Theme::Dark,
             show_hud: true,
+            show_left_panel: true,
+            show_right_panel: true,
             split_pos: 0.5,
             screenshot_dir: desk_dir,
             amplifier: 5.0,
@@ -894,24 +900,29 @@ impl eframe::App for DiffPlayerApp {
                 crate::ui::controls::show_menu_bar(ui, self);
             });
 
-            // ── Info / metadata panel (left side) ──────────────────────────────
-            egui::SidePanel::left("info_panel")
-                .resizable(true)
-                .default_width(260.0)
-                .min_width(200.0)
-                .max_width(340.0)
-                .show(ctx, |ui| {
-                    crate::ui::info_panel::show(ui, self);
-                });
+            // ── Info / metadata panel (left side); toggle in Vista menu
+            if self.view.show_left_panel {
+                egui::SidePanel::left("info_panel")
+                    .resizable(true)
+                    .default_width(260.0)
+                    .min_width(200.0)
+                    .max_width(340.0)
+                    .show(ctx, |ui| {
+                        crate::ui::info_panel::show(ui, self);
+                    });
+            }
 
-            // ── Audio controls (right side) ────────────────────────────────────
-            egui::SidePanel::right("audio_panel")
-                .resizable(false)
-                .default_width(60.0)
-                .max_width(100.0)
-                .show(ctx, |ui| {
-                    crate::ui::controls::show_audio_panel(ui, self);
-                });
+            // ── Audio + mode toolbar (right side); toggle in Vista menu
+            if self.view.show_right_panel {
+                egui::SidePanel::right("audio_panel")
+                    .resizable(true)
+                    .default_width(110.0)
+                    .min_width(90.0)
+                    .max_width(220.0)
+                    .show(ctx, |ui| {
+                        crate::ui::controls::show_audio_panel(ui, self);
+                    });
+            }
 
             // ── Timeline (bottom) ───────────────────────────────────────────────
             egui::TopBottomPanel::bottom("timeline").show(ctx, |ui| {

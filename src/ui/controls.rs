@@ -3,7 +3,7 @@
 use egui::{Color32, RichText, Ui};
 
 use crate::app::DiffPlayerApp;
-use crate::types::{CompareMode, Language, SafeZoneMode};
+use crate::types::{CompareMode, DiffMode, Language, SafeZoneMode};
 use crate::ui::theme::apply_theme;
 
 /// Renders the full menu bar: classic dropdown menus followed by an inline
@@ -101,6 +101,37 @@ pub fn show_menu_bar(ui: &mut Ui, app: &mut DiffPlayerApp) {
                 {
                     let v = app.view().show_hud;
                     app.view_mut().show_hud = !v;
+                    ui.close_menu();
+                }
+                ui.separator();
+                let mut left = app.view().show_left_panel;
+                if ui
+                    .checkbox(
+                        &mut left,
+                        match app.view().lang {
+                            Language::Es => "Barra izquierda (datos del vídeo)",
+                            Language::En => "Left panel (video data)",
+                            Language::Quenya => "Parma left (video data)",
+                        },
+                    )
+                    .changed()
+                {
+                    app.view_mut().show_left_panel = left;
+                    ui.close_menu();
+                }
+                let mut right = app.view().show_right_panel;
+                if ui
+                    .checkbox(
+                        &mut right,
+                        match app.view().lang {
+                            Language::Es => "Barra derecha (controles y audio)",
+                            Language::En => "Right panel (controls & audio)",
+                            Language::Quenya => "Parma right (controls & audio)",
+                        },
+                    )
+                    .changed()
+                {
+                    app.view_mut().show_right_panel = right;
                     ui.close_menu();
                 }
                 ui.separator();
@@ -528,388 +559,7 @@ pub fn show_menu_bar(ui: &mut Ui, app: &mut DiffPlayerApp) {
         {
             app.do_step_fwd(ui.ctx());
         }
-
-        ui.separator();
-
-        // Display mode buttons
-        let c_mode = app.view().mode;
-        let split = app.view().split_pos;
-        let is_a = c_mode == CompareMode::SplitScreen && split > 0.95;
-        let is_b = c_mode == CompareMode::SplitScreen && split < 0.05;
-        let is_split = c_mode == CompareMode::SplitScreen && !is_a && !is_b;
-        let active = Color32::from_rgb(80, 130, 200);
-
-        macro_rules! mode_btn {
-            ($label:expr, $active_cond:expr, $action:block) => {
-                if ui.add(egui::Button::new($label).fill(
-                    if $active_cond { active } else { Color32::TRANSPARENT }
-                )).clicked() $action
-            };
-        }
-
-        mode_btn!(
-            match app.view().lang {
-                Language::Es => "Solo A",
-                Language::En => "A Only",
-                Language::Quenya => "Erya A",
-            },
-            is_a,
-            {
-                app.view_mut().mode = CompareMode::SplitScreen;
-                app.view_mut().split_pos = 1.0;
-            }
-        );
-        mode_btn!(
-            match app.view().lang {
-                Language::Es => "Solo B",
-                Language::En => "B Only",
-                Language::Quenya => "Erya B",
-            },
-            is_b,
-            {
-                app.view_mut().mode = CompareMode::SplitScreen;
-                app.view_mut().split_pos = 0.0;
-            }
-        );
-        mode_btn!(
-            match app.view().lang {
-                Language::Es => "Cortina",
-                Language::En => "Split",
-                Language::Quenya => "Hyanda",
-            },
-            is_split,
-            {
-                app.view_mut().mode = CompareMode::SplitScreen;
-                if is_a || is_b {
-                    app.view_mut().split_pos = 0.5;
-                }
-            }
-        );
-        mode_btn!(
-            match app.view().lang {
-                Language::Es => "Diferencia",
-                Language::En => "Diff",
-                Language::Quenya => "Winya",
-            },
-            c_mode == CompareMode::AbsDiff,
-            {
-                app.view_mut().mode = CompareMode::AbsDiff;
-            }
-        );
-        mode_btn!(
-            match app.view().lang {
-                Language::Es => "Mapa Calor",
-                Language::En => "Heatmap",
-                Language::Quenya => "Úrë",
-            },
-            c_mode == CompareMode::Heatmap,
-            {
-                app.view_mut().mode = CompareMode::Heatmap;
-            }
-        );
-        mode_btn!(
-            match app.view().lang {
-                Language::Es => "Lado a Lado",
-                Language::En => "Side×Side",
-                Language::Quenya => "Ara",
-            },
-            c_mode == CompareMode::SideBySide,
-            {
-                app.view_mut().mode = CompareMode::SideBySide;
-            }
-        );
-
-        ui.separator();
-
-        // Contextual slider depending on mode
-        match app.view().mode {
-            CompareMode::SplitScreen => {
-                let is_h = app.view().split_horizontal;
-                let (label_v, label_h) = match app.view().lang {
-                    Language::Es => ("Cortina V", "Cortina H"),
-                    Language::En => ("Split V", "Split H"),
-                    Language::Quenya => ("Hya V", "Hya H"),
-                };
-                if ui
-                    .button(if is_h { label_h } else { label_v })
-                    .on_hover_text(if is_h {
-                        if app.view().lang == Language::Es {
-                            "Cambiar a cortina vertical"
-                        } else {
-                            "Switch to vertical curtain"
-                        }
-                    } else {
-                        if app.view().lang == Language::Es {
-                            "Cambiar a cortina horizontal"
-                        } else {
-                            "Switch to horizontal curtain"
-                        }
-                    })
-                    .clicked()
-                {
-                    app.view_mut().split_horizontal = !app.view().split_horizontal;
-                }
-                ui.label(match app.view().lang {
-                    Language::Es => {
-                        if is_h {
-                            "Cortina (Y):"
-                        } else {
-                            "Cortina (X):"
-                        }
-                    }
-                    Language::En => {
-                        if is_h {
-                            "Split (Y):"
-                        } else {
-                            "Split (X):"
-                        }
-                    }
-                    Language::Quenya => {
-                        if is_h {
-                            "Hya (Y):"
-                        } else {
-                            "Hya (X):"
-                        }
-                    }
-                });
-                let mut sp = app.view().split_pos;
-                if ui
-                    .add(
-                        egui::Slider::new(&mut sp, 0.0f32..=1.0)
-                            .step_by(0.01)
-                            .fixed_decimals(2),
-                    )
-                    .changed()
-                {
-                    app.view_mut().split_pos = sp;
-                }
-            }
-            CompareMode::Heatmap | CompareMode::AbsDiff => {
-                ui.label(match app.view().lang {
-                    Language::Es => "Amp:",
-                    Language::En => "Amp:",
-                    Language::Quenya => "Púta:",
-                });
-                let mut amp = app.view().amplifier;
-                if ui
-                    .add(
-                        egui::Slider::new(&mut amp, 1.0f32..=50.0)
-                            .step_by(0.5)
-                            .suffix("×"),
-                    )
-                    .changed()
-                {
-                    app.view_mut().amplifier = amp;
-                }
-                if app.view().mode == CompareMode::AbsDiff {
-                    ui.separator();
-                    let width = ui.available_width();
-                    if width > 300.0 {
-                        ui.horizontal(|ui| {
-                            let mut d_mode = app.view().diff_mode;
-                            if ui
-                                .radio_value(
-                                    &mut d_mode,
-                                    crate::types::DiffMode::LegacyAbs,
-                                    "Legacy",
-                                )
-                                .changed()
-                            {
-                                app.view_mut().diff_mode = d_mode;
-                            }
-                            if ui
-                                .radio_value(
-                                    &mut d_mode,
-                                    crate::types::DiffMode::AbsLinear,
-                                    "Linear",
-                                )
-                                .changed()
-                            {
-                                app.view_mut().diff_mode = d_mode;
-                            }
-                            if ui
-                                .radio_value(&mut d_mode, crate::types::DiffMode::AbsSqrt, "Sqrt")
-                                .changed()
-                            {
-                                app.view_mut().diff_mode = d_mode;
-                            }
-                            if ui
-                                .radio_value(
-                                    &mut d_mode,
-                                    crate::types::DiffMode::SignedDiverging,
-                                    "Signed",
-                                )
-                                .changed()
-                            {
-                                app.view_mut().diff_mode = d_mode;
-                            }
-                        });
-                    } else {
-                        // Narrow UI: Use ComboBox
-                        let mut d_mode = app.view().diff_mode;
-                        egui::ComboBox::from_id_source("diff_mode_combo")
-                            .selected_text(format!("{:?}", d_mode))
-                            .show_ui(ui, |ui| {
-                                ui.selectable_value(
-                                    &mut d_mode,
-                                    crate::types::DiffMode::LegacyAbs,
-                                    "Legacy",
-                                );
-                                ui.selectable_value(
-                                    &mut d_mode,
-                                    crate::types::DiffMode::AbsLinear,
-                                    "Linear",
-                                );
-                                ui.selectable_value(
-                                    &mut d_mode,
-                                    crate::types::DiffMode::AbsSqrt,
-                                    "Sqrt",
-                                );
-                                ui.selectable_value(
-                                    &mut d_mode,
-                                    crate::types::DiffMode::SignedDiverging,
-                                    "Signed",
-                                );
-                            });
-                        if d_mode != app.view().diff_mode {
-                            app.view_mut().diff_mode = d_mode;
-                        }
-                    }
-                }
-            }
-            CompareMode::SideBySide => {
-                ui.label(match app.view().lang {
-                    Language::Es => "Amp:",
-                    Language::En => "Amp:",
-                    Language::Quenya => "Púta:",
-                });
-                let mut amp = app.view().amplifier;
-                if ui
-                    .add(
-                        egui::Slider::new(&mut amp, 1.0f32..=50.0)
-                            .step_by(0.5)
-                            .suffix("×"),
-                    )
-                    .changed()
-                {
-                    app.view_mut().amplifier = amp;
-                }
-                ui.separator();
-                let width = ui.available_width();
-                if width > 400.0 {
-                    ui.horizontal(|ui| {
-                        let mut d_mode = app.view().diff_mode;
-                        if ui
-                            .radio_value(&mut d_mode, crate::types::DiffMode::LegacyAbs, "Legacy")
-                            .changed()
-                        {
-                            app.view_mut().diff_mode = d_mode;
-                        }
-                        if ui
-                            .radio_value(&mut d_mode, crate::types::DiffMode::AbsLinear, "Linear")
-                            .changed()
-                        {
-                            app.view_mut().diff_mode = d_mode;
-                        }
-                        if ui
-                            .radio_value(&mut d_mode, crate::types::DiffMode::AbsSqrt, "Sqrt")
-                            .changed()
-                        {
-                            app.view_mut().diff_mode = d_mode;
-                        }
-                        if ui
-                            .radio_value(
-                                &mut d_mode,
-                                crate::types::DiffMode::SignedDiverging,
-                                "Signed",
-                            )
-                            .changed()
-                        {
-                            app.view_mut().diff_mode = d_mode;
-                        }
-                        if ui
-                            .radio_value(
-                                &mut d_mode,
-                                crate::types::DiffMode::None,
-                                match app.view().lang {
-                                    Language::Es => "Sin Filtro",
-                                    Language::En => "No Filter",
-                                    Language::Quenya => "Munca U-winya",
-                                },
-                            )
-                            .changed()
-                        {
-                            app.view_mut().diff_mode = d_mode;
-                        }
-                    });
-                } else {
-                    // Narrow UI: Use ComboBox
-                    let mut d_mode = app.view().diff_mode;
-                    egui::ComboBox::from_id_source("diff_mode_combo_sbs")
-                        .selected_text(match d_mode {
-                            crate::types::DiffMode::None => match app.view().lang {
-                                Language::Es => "Sin Filtro".to_owned(),
-                                Language::En => "No Filter".to_owned(),
-                                Language::Quenya => "Munca U-winya".to_owned(),
-                            },
-                            _ => format!("{:?}", d_mode),
-                        })
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(
-                                &mut d_mode,
-                                crate::types::DiffMode::LegacyAbs,
-                                "Legacy",
-                            );
-                            ui.selectable_value(
-                                &mut d_mode,
-                                crate::types::DiffMode::AbsLinear,
-                                "Linear",
-                            );
-                            ui.selectable_value(
-                                &mut d_mode,
-                                crate::types::DiffMode::AbsSqrt,
-                                "Sqrt",
-                            );
-                            ui.selectable_value(
-                                &mut d_mode,
-                                crate::types::DiffMode::SignedDiverging,
-                                "Signed",
-                            );
-                            ui.selectable_value(
-                                &mut d_mode,
-                                crate::types::DiffMode::None,
-                                match app.view().lang {
-                                    Language::Es => "Sin Filtro",
-                                    Language::En => "No Filter",
-                                    Language::Quenya => "Munca U-winya",
-                                },
-                            );
-                        });
-                    if d_mode != app.view().diff_mode {
-                        app.view_mut().diff_mode = d_mode;
-                    }
-                }
-            }
-        }
-
-        // Zoom reset button (only visible when zoomed in/out)
-        let zoom = app.view().zoom;
-        if (zoom - 1.0).abs() > 0.01 {
-            ui.separator();
-            if ui
-                .button(format!("Zoom {:.1}x", zoom))
-                .on_hover_text(match app.view().lang {
-                    Language::Es => "Reiniciar zoom (doble clic en imagen)",
-                    Language::En => "Reset zoom (double-click canvas)",
-                    Language::Quenya => "En-panya zoom",
-                })
-                .clicked()
-            {
-                app.view_mut().zoom = 1.0;
-                app.view_mut().pan_u = 0.0;
-                app.view_mut().pan_v = 0.0;
-            }
-        }
+        // Mode selector and contextual options moved to right sidebar (show_audio_panel) for low-res visibility.
     });
 }
 
@@ -926,11 +576,233 @@ fn short_name(path: &str) -> String {
     }
 }
 
+/// Mode selector and contextual options (Cortina, Amp, Diff mode, Zoom). Used in the right sidebar.
+pub fn show_mode_toolbar(ui: &mut Ui, app: &mut DiffPlayerApp) {
+    let c_mode = app.view().mode;
+    let split = app.view().split_pos;
+    let is_a = c_mode == CompareMode::SplitScreen && split > 0.95;
+    let is_b = c_mode == CompareMode::SplitScreen && split < 0.05;
+    let is_split = c_mode == CompareMode::SplitScreen && !is_a && !is_b;
+    let active = Color32::from_rgb(80, 130, 200);
+
+    ui.vertical(|ui| {
+        ui.set_min_width(90.0);
+        // Display mode buttons (stacked for narrow sidebar)
+        if ui
+            .add(
+                egui::Button::new(match app.view().lang {
+                    Language::Es => "Solo A",
+                    Language::En => "A Only",
+                    Language::Quenya => "Erya A",
+                })
+                .fill(if is_a { active } else { Color32::TRANSPARENT }),
+            )
+            .clicked()
+        {
+            app.view_mut().mode = CompareMode::SplitScreen;
+            app.view_mut().split_pos = 1.0;
+        }
+        if ui
+            .add(
+                egui::Button::new(match app.view().lang {
+                    Language::Es => "Solo B",
+                    Language::En => "B Only",
+                    Language::Quenya => "Erya B",
+                })
+                .fill(if is_b { active } else { Color32::TRANSPARENT }),
+            )
+            .clicked()
+        {
+            app.view_mut().mode = CompareMode::SplitScreen;
+            app.view_mut().split_pos = 0.0;
+        }
+        if ui
+            .add(
+                egui::Button::new(match app.view().lang {
+                    Language::Es => "Cortina",
+                    Language::En => "Split",
+                    Language::Quenya => "Hyanda",
+                })
+                .fill(if is_split { active } else { Color32::TRANSPARENT }),
+            )
+            .clicked()
+        {
+            app.view_mut().mode = CompareMode::SplitScreen;
+            if is_a || is_b {
+                app.view_mut().split_pos = 0.5;
+            }
+        }
+        if ui
+            .add(
+                egui::Button::new(match app.view().lang {
+                    Language::Es => "Diferencia",
+                    Language::En => "Diff",
+                    Language::Quenya => "Winya",
+                })
+                .fill(if c_mode == CompareMode::AbsDiff {
+                    active
+                } else {
+                    Color32::TRANSPARENT
+                }),
+            )
+            .clicked()
+        {
+            app.view_mut().mode = CompareMode::AbsDiff;
+        }
+        if ui
+            .add(
+                egui::Button::new(match app.view().lang {
+                    Language::Es => "Mapa Calor",
+                    Language::En => "Heatmap",
+                    Language::Quenya => "Úrë",
+                })
+                .fill(if c_mode == CompareMode::Heatmap {
+                    active
+                } else {
+                    Color32::TRANSPARENT
+                }),
+            )
+            .clicked()
+        {
+            app.view_mut().mode = CompareMode::Heatmap;
+        }
+        if ui
+            .add(
+                egui::Button::new(match app.view().lang {
+                    Language::Es => "Lado a Lado",
+                    Language::En => "Side×Side",
+                    Language::Quenya => "Ara",
+                })
+                .fill(if c_mode == CompareMode::SideBySide {
+                    active
+                } else {
+                    Color32::TRANSPARENT
+                }),
+            )
+            .clicked()
+        {
+            app.view_mut().mode = CompareMode::SideBySide;
+        }
+
+        ui.separator();
+
+        match app.view().mode {
+            CompareMode::SplitScreen => {
+                let is_h = app.view().split_horizontal;
+                if ui
+                    .button(if is_h {
+                        match app.view().lang {
+                            Language::Es => "Cortina H",
+                            Language::En => "Split H",
+                            Language::Quenya => "Hya H",
+                        }
+                    } else {
+                        match app.view().lang {
+                            Language::Es => "Cortina V",
+                            Language::En => "Split V",
+                            Language::Quenya => "Hya V",
+                        }
+                    })
+                    .clicked()
+                {
+                    app.view_mut().split_horizontal = !app.view().split_horizontal;
+                }
+                ui.label(if is_h { "Cort. (Y):" } else { "Cort. (X):" });
+                let mut sp = app.view().split_pos;
+                if ui.add(egui::Slider::new(&mut sp, 0.0..=1.0).fixed_decimals(2)).changed() {
+                    app.view_mut().split_pos = sp;
+                }
+            }
+            CompareMode::Heatmap | CompareMode::AbsDiff => {
+                ui.label("Amp:");
+                let mut amp = app.view().amplifier;
+                if ui
+                    .add(egui::Slider::new(&mut amp, 1.0..=50.0).step_by(0.5).suffix("×"))
+                    .changed()
+                {
+                    app.view_mut().amplifier = amp;
+                }
+                if app.view().mode == CompareMode::AbsDiff {
+                    ui.separator();
+                    let mut d_mode = app.view().diff_mode;
+                    egui::ComboBox::from_id_source("diff_mode_side")
+                        .selected_text(match d_mode {
+                            DiffMode::LegacyAbs => "Legacy",
+                            DiffMode::AbsLinear => "Linear",
+                            DiffMode::AbsSqrt => "Sqrt",
+                            DiffMode::SignedDiverging => "Signed",
+                            DiffMode::None => "—",
+                        })
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut d_mode, DiffMode::LegacyAbs, "Legacy");
+                            ui.selectable_value(&mut d_mode, DiffMode::AbsLinear, "Linear");
+                            ui.selectable_value(&mut d_mode, DiffMode::AbsSqrt, "Sqrt");
+                            ui.selectable_value(&mut d_mode, DiffMode::SignedDiverging, "Signed");
+                        });
+                    if d_mode != app.view().diff_mode {
+                        app.view_mut().diff_mode = d_mode;
+                    }
+                }
+            }
+            CompareMode::SideBySide => {
+                ui.label("Amp:");
+                let mut amp = app.view().amplifier;
+                if ui
+                    .add(egui::Slider::new(&mut amp, 1.0..=50.0).step_by(0.5).suffix("×"))
+                    .changed()
+                {
+                    app.view_mut().amplifier = amp;
+                }
+                ui.separator();
+                let mut d_mode = app.view().diff_mode;
+                egui::ComboBox::from_id_source("diff_mode_sbs_side")
+                    .selected_text(match d_mode {
+                        DiffMode::None => match app.view().lang {
+                            Language::Es => "Sin Filtro".to_string(),
+                            Language::En => "No Filter".to_string(),
+                            Language::Quenya => "Munca".to_string(),
+                        },
+                        _ => format!("{:?}", d_mode),
+                    })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut d_mode, DiffMode::LegacyAbs, "Legacy");
+                        ui.selectable_value(&mut d_mode, DiffMode::AbsLinear, "Linear");
+                        ui.selectable_value(&mut d_mode, DiffMode::AbsSqrt, "Sqrt");
+                        ui.selectable_value(&mut d_mode, DiffMode::SignedDiverging, "Signed");
+                        ui.selectable_value(
+                            &mut d_mode,
+                            DiffMode::None,
+                            match app.view().lang {
+                                Language::Es => "Sin Filtro",
+                                Language::En => "No Filter",
+                                Language::Quenya => "Munca",
+                            },
+                        );
+                    });
+                if d_mode != app.view().diff_mode {
+                    app.view_mut().diff_mode = d_mode;
+                }
+            }
+        }
+
+        let zoom = app.view().zoom;
+        if (zoom - 1.0).abs() > 0.01 {
+            ui.separator();
+            if ui.button(format!("Zoom {:.1}×", zoom)).clicked() {
+                app.view_mut().zoom = 1.0;
+                app.view_mut().pan_u = 0.0;
+                app.view_mut().pan_v = 0.0;
+            }
+        }
+    });
+}
+
 pub fn show_audio_panel(ui: &mut Ui, app: &mut DiffPlayerApp) {
     ui.vertical_centered(|ui| {
-        ui.heading("Audio");
+        show_mode_toolbar(ui, app);
         ui.separator();
-        ui.add_space(10.0);
+        ui.heading("Audio");
+        ui.add_space(6.0);
 
         ui.label(
             RichText::new("A")

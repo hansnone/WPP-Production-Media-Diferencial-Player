@@ -1,116 +1,161 @@
-# build.ps1 - Cross-platform (Windows) build script for DiffPlayerQC
+# build.ps1 - Setup dependencies and build DiffPlayerQC on Windows
+# Run with: powershell -ExecutionPolicy Bypass -File build.ps1
 $ErrorActionPreference = "Stop"
 
-# Detect if we are on Windows
-$IsWin = $IsWindows -or ($PSVersionTable.PSVersion.Major -lt 6)
+$IsWin = $IsWindows -or ($env:OS -eq "Windows_NT") -or ($PSVersionTable.PSVersion.Major -lt 6)
+if (-not $IsWin) {
+    Write-Host "This script is for Windows. On macOS/Linux use build.sh or cargo build." -ForegroundColor Yellow
+    exit 1
+}
 
-if ($IsWin) {
-    Write-Host "Detected OS: Windows"
-    
-    $msys2_path = "C:\msys64\ucrt64"
-    if (-not (Test-Path $msys2_path)) {
-        Write-Host "MSYS2 UCRT64 environment not found at $msys2_path." -ForegroundColor Red
-        Write-Host "Please ensure MSYS2 is installed along with dependencies:"
-        Write-Host "pacman -S mingw-w64-ucrt-x86_64-ffmpeg mingw-w64-ucrt-x86_64-clang mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-pkgconf"
+Write-Host "=== DiffPlayerQC - Setup and Build (Windows) ===" -ForegroundColor Cyan
+
+# ---------- 1. Rust (rustup + cargo) ----------
+$cargo = Get-Command cargo -ErrorAction SilentlyContinue
+if (-not $cargo) {
+    Write-Host "`n[1/4] Rust not found. Installing rustup..." -ForegroundColor Yellow
+    $rustupUrl = "https://win.rustup.org/x86_64"
+    $rustupExe = "$env:TEMP\rustup-init.exe"
+    try {
+        Invoke-WebRequest -Uri $rustupUrl -OutFile $rustupExe -UseBasicParsing
+        & $rustupExe -y
+        $env:PATH = "$env:USERPROFILE\.cargo\bin;" + $env:PATH
+        $cargo = Get-Command cargo -ErrorAction SilentlyContinue
+        if (-not $cargo) {
+            Write-Host "Rust installed. Please close and reopen PowerShell, then run this script again." -ForegroundColor Green
+            exit 0
+        }
+    } catch {
+        Write-Host "Failed to download rustup: $_" -ForegroundColor Red
+        Write-Host "Install manually from https://rustup.rs and run this script again." -ForegroundColor Yellow
         exit 1
     }
+} else {
+    Write-Host "`n[1/4] Rust found: $($cargo.Source)" -ForegroundColor Green
+}
 
-    Write-Host "Configuring MSYS2 UCRT64 environment variables..." -ForegroundColor DarkGray
+# Ensure GNU target for Windows (needed when using MSYS2 gcc)
+rustup target add x86_64-pc-windows-gnu 2>$null
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Adding target x86_64-pc-windows-gnu via rustup..." -ForegroundColor DarkGray
+}
 
-    # CRITICAL: We MUST remove FFMPEG_DIR so ffmpeg-sys-next uses pkg-config instead of its fragile path fallback.
-    $env:FFMPEG_DIR = $null
+# ---------- 2. MSYS2 ----------
+$msys64 = "C:\msys64"
+$ucrt64 = "$msys64\ucrt64"
+$ucrt64Bin = "$ucrt64\bin"
 
-    # Prepend MSYS2 bin to PATH so gcc and pkg-config commands resolve to the MSYS2 ones
-    $env:PATH = "$msys2_path\bin;" + $env:PATH
+if (-not (Test-Path $ucrt64Bin)) {
+    Write-Host "`n[2/4] MSYS2 UCRT64 not found at $msys64" -ForegroundColor Yellow
+    # Try winget first
+    $winget = Get-Command winget -ErrorAction SilentlyContinue
+    if ($winget) {
+        Write-Host "Installing MSYS2 via winget (this may take a few minutes)..." -ForegroundColor Cyan
+        winget install --id MSYS2.MSYS2 --accept-package-agreements --accept-source-agreements
+        if (-not (Test-Path $msys64)) {
+            $msys64 = "${env:ProgramFiles}\msys64"
+            $ucrt64 = "$msys64\ucrt64"
+            $ucrt64Bin = "$ucrt64\bin"
+        }
+    }
+    if (-not (Test-Path $ucrt64Bin)) {
+        Write-Host "MSYS2 not found. Please install it manually:" -ForegroundColor Red
+        Write-Host "  1. Download from https://www.msys2.org/" -ForegroundColor White
+        Write-Host "  2. Run the installer (default: C:\msys64)" -ForegroundColor White
+        Write-Host "  3. Open 'MSYS2 UCRT64' from Start Menu and run:" -ForegroundColor White
+        Write-Host "     pacman -Syu" -ForegroundColor White
+        Write-Host "     pacman -S mingw-w64-ucrt-x86_64-ffmpeg mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-pkgconf" -ForegroundColor White
+        Write-Host "  4. Run this script again." -ForegroundColor White
+        exit 1
+    }
+}
+Write-Host "[2/4] MSYS2 UCRT64 found: $ucrt64" -ForegroundColor Green
 
-    # Set paths for pkg-config and bindgen
-    $env:PKG_CONFIG_PATH = "$msys2_path\lib\pkgconfig"
-    $env:PKG_CONFIG_ALLOW_CROSS = "1"
-    $env:LIBCLANG_PATH = "$msys2_path\bin"
-    $env:CC = "gcc"
+# ---------- 3. MSYS2 packages (FFmpeg, GCC, pkg-config) ----------
+Write-Host "`n[3/4] Checking MSYS2 build dependencies..." -ForegroundColor Cyan
+$gccExe = "$ucrt64Bin\gcc.exe"
+$pkgConfig = "$ucrt64Bin\pkg-config.exe"
+$ffmpegPc = "$ucrt64\lib\pkgconfig\libavcodec.pc"
 
-    Write-Host "Compiling DiffPlayerQC for Windows (GNU target - Release Mode)..." -ForegroundColor Cyan
+if (-not (Test-Path $gccExe) -or -not (Test-Path $ffmpegPc)) {
+    Write-Host "Installing build tools and FFmpeg in MSYS2 UCRT64..." -ForegroundColor Yellow
+    $bash = "$msys64\usr\bin\bash.exe"
+    if (-not (Test-Path $bash)) {
+        Write-Host "bash.exe not found. Open 'MSYS2 UCRT64' and run:" -ForegroundColor Red
+        Write-Host "  pacman -Syu" -ForegroundColor White
+        Write-Host "  pacman -S mingw-w64-ucrt-x86_64-ffmpeg mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-pkgconf" -ForegroundColor White
+        exit 1
+    }
+    & $bash -lc "pacman -Syu --noconfirm"
+    & $bash -lc "pacman -S --noconfirm mingw-w64-ucrt-x86_64-ffmpeg mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-pkgconf"
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "pacman install failed. Run manually in MSYS2 UCRT64:" -ForegroundColor Red
+        Write-Host "  pacman -S mingw-w64-ucrt-x86_64-ffmpeg mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-pkgconf" -ForegroundColor White
+        exit 1
+    }
+    Write-Host "MSYS2 packages installed." -ForegroundColor Green
+} else {
+    Write-Host "[3/4] Build dependencies (gcc, ffmpeg, pkg-config) OK." -ForegroundColor Green
+}
+
+# ---------- 4. Build ----------
+Write-Host "`n[4/4] Building DiffPlayerQC (Release)..." -ForegroundColor Cyan
+
+# Unset FFMPEG_DIR so ffmpeg-sys-next uses pkg-config
+$env:FFMPEG_DIR = $null
+$env:PATH = "$ucrt64Bin;" + $env:PATH
+$env:PKG_CONFIG_PATH = "$ucrt64\lib\pkgconfig"
+$env:PKG_CONFIG_ALLOW_CROSS = "1"
+$env:LIBCLANG_PATH = $ucrt64Bin
+$env:CC = "gcc"
+
+Push-Location $PSScriptRoot
+try {
     cargo build --release --target x86_64-pc-windows-gnu
-
-    if ($LASTEXITCODE -eq 0) {
-        # Extraer versión de Cargo.toml
-        $VERSION = (Select-String -Path "Cargo.toml" -Pattern '^version = "(.*)"').Matches.Groups[1].Value
-        Write-Host "Version detectada: $VERSION" -ForegroundColor Green
-
-        Write-Host "Build successful!" -ForegroundColor Green
-        
-        $RELEASE_DIR = "target\x86_64-pc-windows-gnu\release"
-        $DIST_DIR = "dist\Windows_v$VERSION"
-        
-        Write-Host "`nPreparando carpeta de distribucion portable en $DIST_DIR..." -ForegroundColor Yellow
-        
-        # Kill running instances if any
-        $appName = "diffplayerqc.exe"
-        $runningProcesses = Get-Process -Name ($appName -replace "\.exe$", "") -ErrorAction SilentlyContinue
-        if ($runningProcesses) {
-            Write-Host "Cerrando instancias activas de $appName..." -ForegroundColor Cyan
-            $runningProcesses | Stop-Process -Force -ErrorAction SilentlyContinue
-            Start-Sleep -Milliseconds 500
-        }
-
-        if (Test-Path $DIST_DIR) {
-            Write-Host "Limpiando directorio de distribucion..." -ForegroundColor DarkGray
-            try {
-                Remove-Item -Recurse -Force $DIST_DIR -ErrorAction Stop
-            } catch {
-                # Windows trick: Renaming a locked folder often works where Move or Delete fails
-                # because Explorer handles are often tied to the path/name.
-                $tempDir = $DIST_DIR + "_" + (Get-Date -Format "HHmmss")
-                Write-Host "Aviso: Carpeta bloqueada. Intentando maniobra de escape (renombrado a $tempDir)..." -ForegroundColor Gray
-                try {
-                    Rename-Item -Path $DIST_DIR -NewName (Split-Path $tempDir -Leaf) -ErrorAction Stop
-                    # Once renamed, we can try to delete it in the background or just leave it.
-                    # We'll try one last time to delete the renamed one.
-                    Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
-                } catch {
-                    Write-Host "ERROR: $DIST_DIR sigue bloqueado por otro proceso de forma persistente." -ForegroundColor Red
-                    Write-Host "Cierra exploradores de archivos o editores abiertos en esa ruta y reintenta." -ForegroundColor Yellow
-                    throw "Acceso denegado a $DIST_DIR"
-                }
-            }
-        }
-        New-Item -ItemType Directory -Force -Path $DIST_DIR | Out-Null
-        
-        Write-Host "Copiando ejecutable hiper-optimizado..." -ForegroundColor Green
-        Copy-Item "$RELEASE_DIR\diffplayerqc.exe" -Destination "$DIST_DIR\diffplayerqc-v$VERSION.exe"
-
-        Write-Host "Recopilando dlls dinamicas requeridas desde MSYS2..." -ForegroundColor Yellow
-        $LDD_EXE = "C:\msys64\usr\bin\ldd.exe"
-
-        if (-Not (Test-Path $LDD_EXE)) {
-            Write-Host "Error: No se encontro ldd.exe en MSYS2. Saltando copiado de dlls." -ForegroundColor Red
-        } else {
-            $lddOutput = & $LDD_EXE "$DIST_DIR\diffplayerqc-v$VERSION.exe" 2> $null
-            $contadorDll = 0
-            
-            foreach ($line in $lddOutput) {
-                if ($line -match "=>\s+(/ucrt64/bin/.*?\.dll)") {
-                    $winPath = ($matches[1] -replace "^/ucrt64/", "C:\msys64\ucrt64\") -replace "/", "\"
-                    
-                    if (Test-Path $winPath) {
-                        Copy-Item $winPath -Destination "$DIST_DIR\" -ErrorAction SilentlyContinue
-                        $contadorDll++
-                    }
-                }
-            }
-            Write-Host "Extraccion completada: $contadorDll DLLs esenciales nativas de FFmpeg copiadas al instalador." -ForegroundColor Green
-            Write-Host "`n==========================================================================" -ForegroundColor Cyan
-            Write-Host "¡La app ya es MUY PORTABLE para cualquier cliente de Windows!" -ForegroundColor White 
-            Write-Host "Simplemente comprime la carpeta `$(Resolve-Path $DIST_DIR).Path` y envíasela a cualquiera." -ForegroundColor White
-            Write-Host "==========================================================================" -ForegroundColor Cyan
-        }
-
-    } else {
-        Write-Host "Build failed with exit code $LASTEXITCODE" -ForegroundColor Red
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Build failed." -ForegroundColor Red
         exit $LASTEXITCODE
     }
-} else {
-    Write-Host "You are running PowerShell on a non-Windows OS." -ForegroundColor Yellow
-    Write-Host "Please use ./build.sh instead."
-    exit 1
+
+    $VERSION = (Select-String -Path "Cargo.toml" -Pattern '^version = "(.*)"').Matches.Groups[1].Value
+    Write-Host "`nBuild successful (version $VERSION)." -ForegroundColor Green
+
+    $RELEASE_DIR = "target\x86_64-pc-windows-gnu\release"
+    $DIST_DIR = "dist\Windows_v$VERSION"
+    New-Item -ItemType Directory -Force -Path $DIST_DIR | Out-Null
+
+    $appName = "diffplayerqc.exe"
+    $runningProcesses = Get-Process -Name ($appName -replace "\.exe$", "") -ErrorAction SilentlyContinue
+    if ($runningProcesses) {
+        Write-Host "Closing running instances of $appName..." -ForegroundColor Cyan
+        $runningProcesses | Stop-Process -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Milliseconds 500
+    }
+
+    if (Test-Path $DIST_DIR) { Remove-Item -Recurse -Force $DIST_DIR -ErrorAction SilentlyContinue }
+    New-Item -ItemType Directory -Force -Path $DIST_DIR | Out-Null
+
+    Copy-Item "$RELEASE_DIR\diffplayerqc.exe" -Destination "$DIST_DIR\diffplayerqc-v$VERSION.exe"
+
+    # Copy required DLLs from MSYS2
+    $LDD_EXE = "$msys64\usr\bin\ldd.exe"
+    if (Test-Path $LDD_EXE) {
+        $lddOutput = & $LDD_EXE "$DIST_DIR\diffplayerqc-v$VERSION.exe" 2>$null
+        $count = 0
+        foreach ($line in $lddOutput) {
+            if ($line -match "=>\s+(/ucrt64/bin/.*?\.dll)") {
+                $winPath = ($matches[1] -replace "^/ucrt64/", "$ucrt64\") -replace "/", "\"
+                if (Test-Path $winPath) {
+                    Copy-Item $winPath -Destination "$DIST_DIR\" -ErrorAction SilentlyContinue
+                    $count++
+                }
+            }
+        }
+        Write-Host "Copied $count DLLs to $DIST_DIR" -ForegroundColor Green
+    }
+
+    Write-Host "`nOutput: $DIST_DIR\diffplayerqc-v$VERSION.exe" -ForegroundColor Cyan
+    Write-Host "Dist folder ready: $DIST_DIR" -ForegroundColor White
+} finally {
+    Pop-Location
 }
