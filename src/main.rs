@@ -1,7 +1,11 @@
-// main.rs — DiffPlayerQC entry point
+//! Punto de entrada del binario: logging, icono de ventana y arranque de `eframe`.
+//!
+//! Los módulos de la app viven en `app/`, `decoder`, `renderer`, etc. No contiene lógica de QC;
+//! solo configura el entorno nativo antes de delegar en [`DiffPlayerApp`](crate::app::DiffPlayerApp).
 
 mod app;
 mod decoder;
+mod proxy;
 mod renderer;
 mod trace_log;
 mod types;

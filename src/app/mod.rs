@@ -1,7 +1,14 @@
-// app.rs — Main eframe application
+//! Aplicación egui/eframe: estado global, bucle `update`, decoders, audio y proxy EXR.
+//!
+//! Submódulos: [`playback`] (temporización de repintado), [`proxy_bridge`] (ruta al proxy.mkv).
+//! Ver `docs/ARQUITECTURA.md` en el repositorio para el flujo completo.
+
+mod playback;
+mod proxy_bridge;
 
 use crossbeam_channel::{Receiver, Sender};
 use parking_lot::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use crate::decoder;
@@ -12,7 +19,7 @@ use crate::types::{
 };
 use rodio::{OutputStream, Sink};
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
@@ -199,6 +206,17 @@ pub struct DiffPlayerApp {
 
     /// Deferred key action: process at start of next update to avoid re-entrancy/deadlock when called from ctx.input().
     pending_key_action: PendingKeyAction,
+
+    /// Proxy generation: progress 0.0..=1.0.
+    proxy_progress: Arc<Mutex<f32>>,
+    /// Proxy generation: true while background thread is running.
+    proxy_running: Arc<AtomicBool>,
+    /// Temp directory for current proxy run (PNGs + concat); cleared when run finishes or new run starts.
+    proxy_temp_dir: Option<PathBuf>,
+    /// Channel to load the proxy sequence into when generation finishes.
+    proxy_target_channel: Option<Channel>,
+    /// All proxy temp dirs to remove on exit.
+    proxy_temp_dirs: Vec<PathBuf>,
 }
 
 /// Key actions deferred from ctx.input() to start of update() to avoid re-entrancy on macOS.
@@ -288,8 +306,85 @@ impl DiffPlayerApp {
             frame_count: 0,
             pending_play_pause_toggle: false,
             pending_key_action: PendingKeyAction::None,
+
+            proxy_progress: Arc::new(Mutex::new(0.0)),
+            proxy_running: Arc::new(AtomicBool::new(false)),
+            proxy_temp_dir: None,
+            proxy_target_channel: None,
+            proxy_temp_dirs: Vec::new(),
         }
     }
+
+    /// Start EXR→PNG proxy generation from a directory (lists .exr inside). When done, loads sequence into `channel`.
+    pub fn start_proxy_from_exr_input_dir(
+        &mut self,
+        src_dir: PathBuf,
+        channel: Channel,
+        _ctx: &egui::Context,
+    ) {
+        if self.proxy_running() {
+            return;
+        }
+        let name = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis().to_string())
+            .unwrap_or_else(|_| "proxy".to_string());
+        let temp_dir = std::env::temp_dir().join("diffplayerqc_proxies").join(name);
+        if let Err(e) = std::fs::create_dir_all(&temp_dir) {
+            log::error!("Failed to create proxy temp dir: {e}");
+            return;
+        }
+        self.proxy_temp_dir = Some(temp_dir.clone());
+        self.proxy_target_channel = Some(channel);
+        *self.proxy_progress.lock() = 0.0;
+        crate::proxy::run_from_directory_in_background(
+            src_dir,
+            temp_dir,
+            Arc::clone(&self.proxy_progress),
+            Arc::clone(&self.proxy_running),
+        );
+    }
+
+    /// Start EXR→PNG proxy generation from a list of EXR file paths. When done, loads sequence into `channel`.
+    pub fn start_proxy_from_exr_input_files(
+        &mut self,
+        exr_paths: Vec<PathBuf>,
+        channel: Channel,
+        _ctx: &egui::Context,
+    ) {
+        if self.proxy_running() || exr_paths.is_empty() {
+            return;
+        }
+        let name = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis().to_string())
+            .unwrap_or_else(|_| "proxy".to_string());
+        let temp_dir = std::env::temp_dir().join("diffplayerqc_proxies").join(name);
+        if let Err(e) = std::fs::create_dir_all(&temp_dir) {
+            log::error!("Failed to create proxy temp dir: {e}");
+            return;
+        }
+        self.proxy_temp_dir = Some(temp_dir.clone());
+        self.proxy_target_channel = Some(channel);
+        *self.proxy_progress.lock() = 0.0;
+        crate::proxy::run_from_files_in_background(
+            exr_paths,
+            temp_dir,
+            Arc::clone(&self.proxy_progress),
+            Arc::clone(&self.proxy_running),
+        );
+    }
+
+    /// True if proxy generation is currently running.
+    pub fn proxy_running(&self) -> bool {
+        self.proxy_running.load(Ordering::Relaxed)
+    }
+
+    /// Current proxy progress 0.0..=1.0.
+    pub fn proxy_progress(&self) -> f32 {
+        *self.proxy_progress.lock()
+    }
+
     // -----------------------------------------------------------------------
     //  Open a video file for one channel
     // -----------------------------------------------------------------------
@@ -542,15 +637,6 @@ impl DiffPlayerApp {
         ctx.request_repaint();
     }
 
-    fn step_back(&self, ctx: &egui::Context) {
-        if let Some(dec) = &self.decoder_a {
-            let _ = dec.cmd_tx.send(DecoderCommand::StepBack);
-        }
-        if let Some(dec) = &self.decoder_b {
-            let _ = dec.cmd_tx.send(DecoderCommand::StepBack);
-        }
-        ctx.request_repaint();
-    }
     pub fn swap_videos(&mut self, ctx: &egui::Context) {
         self.swap_videos_inner(ctx);
     }
@@ -636,6 +722,20 @@ impl eframe::App for DiffPlayerApp {
             }
             PendingKeyAction::SwapVideos => self.swap_videos_inner(ctx),
         }
+        // When proxy generation just finished: load the single proxy video (proxy.mkv) into the target channel.
+        if !self.proxy_running()
+            && self.proxy_target_channel.is_some()
+            && self.proxy_temp_dir.is_some()
+        {
+            let dir = self.proxy_temp_dir.take().unwrap();
+            let channel = self.proxy_target_channel.take().unwrap();
+            let proxy_video = proxy_bridge::proxy_video_path(&dir);
+            if proxy_video.exists() {
+                self.proxy_temp_dirs.push(dir);
+                let path_str = proxy_video.to_string_lossy().to_string();
+                self.open_video_from_path(path_str, channel, ctx);
+            }
+        }
         log::info!("App::update() called");
         // First frame: don't request repaint so macOS can finish present.
         // Later: only schedule repaint when playing (request_repaint_after); when paused, input triggers repaint.
@@ -655,8 +755,7 @@ impl eframe::App for DiffPlayerApp {
                     }
                 }
             }
-            // Schedule next repaint. Use shorter interval when audio is active so we drain audio_rx
-            // often enough (rodio needs frequent feeding to avoid underruns and crackling).
+            // Repintado: intervalo corto con audio activo (rodio) para evitar underruns.
             if !is_first_frame {
                 let fps = self
                     .decoder_a_meta()
@@ -664,22 +763,25 @@ impl eframe::App for DiffPlayerApp {
                     .map(|m| m.fps)
                     .unwrap_or(25.0);
                 let max_delay_ms = if self.sink_a.is_some() || self.sink_b.is_some() {
-                    8u64 // Audio active: repaint at least every 8ms to keep sink fed (smooth playback)
+                    playback::REPINT_AUDIO_MAX_MS
                 } else {
-                    100u64
+                    playback::REPINT_IDLE_MAX_MS
                 };
                 if fps > 0.0 {
-                    let next_frame_pts = (self.playback.current_pts * fps).ceil() / fps;
-                    let delay_secs = (next_frame_pts - self.playback.current_pts).max(0.0);
-                    let delay = Duration::from_secs_f64(delay_secs).clamp(
-                        Duration::from_millis(1),
-                        Duration::from_millis(max_delay_ms),
+                    let delay = playback::next_frame_repaint_delay(
+                        fps,
+                        self.playback.current_pts,
+                        max_delay_ms,
                     );
                     ctx.request_repaint_after(delay);
                 } else {
                     ctx.request_repaint();
                 }
             }
+        }
+        // Keep UI updating while proxy generation is running
+        if self.proxy_running() {
+            ctx.request_repaint_after(Duration::from_millis(100));
         }
 
         // Skip Wgpu work on first frame so window can appear on macOS (avoids first-frame block).
@@ -1018,6 +1120,25 @@ impl eframe::App for DiffPlayerApp {
 
             self.view.show_clean_feed_window = show;
         }
+        // ── Proxy loading window ("Cargando imágenes") ─────────────────────
+        if self.proxy_running() {
+            let progress = self.proxy_progress();
+            egui::Window::new("Cargando imágenes")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .default_width(320.0)
+                .show(ctx, |ui| {
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(12.0);
+                        ui.label("Cargando imágenes");
+                        ui.add_space(8.0);
+                        ui.add(egui::ProgressBar::new(progress.clamp(0.0, 1.0)).show_percentage());
+                        ui.add_space(12.0);
+                    });
+                });
+        }
+
         // ── Error Alert Modal ───────────────────────────────────────────────
         if let (Some(title), Some(msg)) = (&self.error_title, &self.error_message) {
             let mut open = true;
@@ -1059,6 +1180,20 @@ impl eframe::App for DiffPlayerApp {
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         log::info!("Application exiting, triggering final save");
         self.view.save();
+        for dir in &self.proxy_temp_dirs {
+            if let Err(e) = std::fs::remove_dir_all(dir) {
+                log::warn!("Failed to remove proxy temp dir {:?}: {}", dir, e);
+            } else {
+                log::info!("Removed proxy temp dir: {:?}", dir);
+            }
+        }
+        self.proxy_temp_dirs.clear();
+        if let Some(ref dir) = self.proxy_temp_dir {
+            if let Err(e) = std::fs::remove_dir_all(dir) {
+                log::warn!("Failed to remove proxy temp dir {:?}: {}", dir, e);
+            }
+            self.proxy_temp_dir = None;
+        }
     }
 }
 
@@ -1239,22 +1374,14 @@ fn show_canvas(ui: &mut egui::Ui, app: &mut DiffPlayerApp, _frame: &mut eframe::
                 }
                 SafeZoneMode::Social => {
                     let danger_fill = egui::Color32::from_black_alpha(150);
-                    let top_danger = egui::Rect::from_min_max(
-                        uv_to_screen(0.0, 0.0),
-                        uv_to_screen(1.0, 0.15),
-                    );
-                    let bottom_danger = egui::Rect::from_min_max(
-                        uv_to_screen(0.0, 0.78),
-                        uv_to_screen(1.0, 1.0),
-                    );
-                    let right_danger = egui::Rect::from_min_max(
-                        uv_to_screen(0.85, 0.0),
-                        uv_to_screen(1.0, 1.0),
-                    );
-                    let left_danger = egui::Rect::from_min_max(
-                        uv_to_screen(0.0, 0.0),
-                        uv_to_screen(0.05, 1.0),
-                    );
+                    let top_danger =
+                        egui::Rect::from_min_max(uv_to_screen(0.0, 0.0), uv_to_screen(1.0, 0.15));
+                    let bottom_danger =
+                        egui::Rect::from_min_max(uv_to_screen(0.0, 0.78), uv_to_screen(1.0, 1.0));
+                    let right_danger =
+                        egui::Rect::from_min_max(uv_to_screen(0.85, 0.0), uv_to_screen(1.0, 1.0));
+                    let left_danger =
+                        egui::Rect::from_min_max(uv_to_screen(0.0, 0.0), uv_to_screen(0.05, 1.0));
                     ui.painter().rect_filled(top_danger, 0.0, danger_fill);
                     ui.painter().rect_filled(bottom_danger, 0.0, danger_fill);
                     ui.painter().rect_filled(right_danger, 0.0, danger_fill);
@@ -1303,30 +1430,67 @@ fn show_canvas(ui: &mut egui::Ui, app: &mut DiffPlayerApp, _frame: &mut eframe::
     // hovered_files is already empty but drag_drop_hover_pos still holds
     // the last valid cursor position from the previous frame.
     if !dropped_files.is_empty() {
+        // Collect paths for EXR or video handling
+        let paths: Vec<PathBuf> = dropped_files
+            .iter()
+            .filter_map(|f| f.path.as_ref().map(PathBuf::from))
+            .collect();
+
+        // EXR: single directory -> proxy from folder; all .exr files -> proxy from list. Target channel from drop position.
+        let mid_x = available.center().x;
+        let hover_x = app
+            .drag_drop_hover_pos
+            .or_else(|| ui.ctx().pointer_hover_pos())
+            .unwrap_or(available.center())
+            .x;
+        let target_chan = if hover_x < mid_x {
+            crate::types::Channel::A
+        } else {
+            crate::types::Channel::B
+        };
+        if paths.len() == 1 && paths[0].is_dir() {
+            app.start_proxy_from_exr_input_dir(paths[0].clone(), target_chan, ui.ctx());
+            app.drag_drop_hover_pos = None;
+            return;
+        }
+        let all_exr = !paths.is_empty()
+            && paths.iter().all(|p| {
+                p.extension()
+                    .map(|e| {
+                        e.to_str()
+                            .map(|s| s.eq_ignore_ascii_case("exr"))
+                            .unwrap_or(false)
+                    })
+                    .unwrap_or(false)
+            });
+        if all_exr {
+            app.start_proxy_from_exr_input_files(paths, target_chan, ui.ctx());
+            app.drag_drop_hover_pos = None;
+            return;
+        }
+
+        // Video handling
         let valid_extensions = [
             "mp4", "mov", "mxf", "mkv", "avi", "prores", "mts", "mpg", "mpeg", "ts",
         ];
-
         let mut valid_paths = Vec::new();
         let mut invalid_files = Vec::new();
 
-        for file in &dropped_files {
-            if let Some(path) = &file.path {
-                let ext = path
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .unwrap_or("")
-                    .to_lowercase();
-                if valid_extensions.contains(&ext.as_str()) {
-                    valid_paths.push(path.to_string_lossy().to_string());
-                } else {
-                    invalid_files.push(
-                        path.file_name()
-                            .unwrap_or_default()
-                            .to_string_lossy()
-                            .to_string(),
-                    );
-                }
+        for path in &paths {
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_lowercase();
+            if valid_extensions.contains(&ext.as_str()) {
+                valid_paths.push(path.to_string_lossy().to_string());
+            } else {
+                invalid_files.push(
+                    path.file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string(),
+                );
             }
         }
 
@@ -1342,8 +1506,8 @@ fn show_canvas(ui: &mut egui::Ui, app: &mut DiffPlayerApp, _frame: &mut eframe::
                 Some("Solo puedes arrastrar un máximo de 2 videos a la vez.".to_string());
         } else if valid_paths.len() == 2 {
             valid_paths.sort(); // A goes to Slot A, B goes to Slot B alphabetically
-            app.open_video_from_path(valid_paths[0].clone(), crate::types::Channel::A, ui.ctx());
-            app.open_video_from_path(valid_paths[1].clone(), crate::types::Channel::B, ui.ctx());
+            app.open_video_a_from_path(valid_paths[0].clone(), ui.ctx());
+            app.open_video_b_from_path(valid_paths[1].clone(), ui.ctx());
         } else if !valid_paths.is_empty() {
             let mid_x = available.center().x;
             let hover_x = app
@@ -1351,12 +1515,11 @@ fn show_canvas(ui: &mut egui::Ui, app: &mut DiffPlayerApp, _frame: &mut eframe::
                 .or_else(|| ui.ctx().pointer_hover_pos())
                 .unwrap_or(available.center())
                 .x;
-            let target_chan = if hover_x < mid_x {
-                crate::types::Channel::A
+            if hover_x < mid_x {
+                app.open_video_a_from_path(valid_paths[0].clone(), ui.ctx());
             } else {
-                crate::types::Channel::B
-            };
-            app.open_video_from_path(valid_paths[0].clone(), target_chan, ui.ctx());
+                app.open_video_b_from_path(valid_paths[0].clone(), ui.ctx());
+            }
         }
 
         app.drag_drop_hover_pos = None;

@@ -1,5 +1,8 @@
-// decoder.rs — FFmpeg decoder using ffmpeg-sys-next (raw C bindings)
-// Uses unsafe FFmpeg C API directly to avoid enum compatibility issues.
+//! Decodificación de vídeo y audio en un hilo dedicado (API C de FFmpeg vía `ffmpeg-sys-next`).
+//!
+//! El bucle recibe [`DecoderCommand`](crate::types::DecoderCommand), emite [`VideoFrame`](crate::types::VideoFrame)
+//! (YUV→RGBA con libswscale, ver `convert_frame`) y [`AudioFrame`](crate::types::AudioFrame) vía `swr`.
+//! El hilo de UI **no** debe bloquearse en estas operaciones.
 
 use anyhow::{anyhow, Context, Result};
 use crossbeam_channel::{Receiver, Sender};
@@ -8,6 +11,9 @@ use std::ptr;
 use std::time::Duration;
 
 use ffmpeg_sys_next as ffi;
+
+/// `SWS_FAST_BILINEAR` (libswscale): más barato que `SWS_BILINEAR` para QC en tiempo real.
+const SWS_FAST_BILINEAR: i32 = 1 << 2;
 
 use crate::trace_log;
 use crate::types::{AudioFrame, ColorMetadata, DecoderCommand, VideoFrame};
@@ -251,6 +257,8 @@ struct DecoderCtx {
     fmt_ctx: *mut ffi::AVFormatContext,
     codec_ctx: *mut ffi::AVCodecContext,
     sws_ctx: *mut ffi::SwsContext,
+    /// Búfer RGBA reutilizable para `sws_scale` (evita `av_frame_alloc` por fotograma).
+    rgba_scratch: *mut ffi::AVFrame,
     stream_idx: i32,
     time_base: ffi::AVRational,
     width: u32,
@@ -260,7 +268,8 @@ struct DecoderCtx {
     audio_stream_idx: i32,
     audio_codec_ctx: *mut ffi::AVCodecContext,
     swr_ctx: *mut ffi::SwrContext,
-    audio_time_base: ffi::AVRational,
+    /// Reservado para PTS de audio alineado al stream; hoy el PCM va a rodio sin marca temporal aquí.
+    _audio_time_base: ffi::AVRational,
 }
 
 impl Drop for DecoderCtx {
@@ -277,6 +286,9 @@ impl Drop for DecoderCtx {
             }
             if !self.sws_ctx.is_null() {
                 ffi::sws_freeContext(self.sws_ctx);
+            }
+            if !self.rgba_scratch.is_null() {
+                ffi::av_frame_free(&mut self.rgba_scratch);
             }
             if !self.swr_ctx.is_null() {
                 ffi::swr_free(&mut self.swr_ctx);
@@ -316,7 +328,7 @@ fn open_decoder(path: &str) -> Result<DecoderCtx> {
             return Err(anyhow!("codec not found"));
         }
 
-        let codec_ctx = ffi::avcodec_alloc_context3(codec);
+        let mut codec_ctx = ffi::avcodec_alloc_context3(codec);
         if codec_ctx.is_null() {
             return Err(anyhow!("avcodec_alloc_context3"));
         }
@@ -352,13 +364,32 @@ fn open_decoder(path: &str) -> Result<DecoderCtx> {
             width as i32,
             height as i32,
             ffi::AVPixelFormat::AV_PIX_FMT_RGBA,
-            2, // SWS_BILINEAR
+            SWS_FAST_BILINEAR,
             ptr::null_mut(),
             ptr::null_mut(),
             ptr::null(),
         );
         if sws_ctx.is_null() {
             return Err(anyhow!("sws_getContext failed"));
+        }
+
+        let mut rgba_scratch = ffi::av_frame_alloc();
+        if rgba_scratch.is_null() {
+            ffi::sws_freeContext(sws_ctx);
+            ffi::avcodec_free_context(&mut codec_ctx);
+            ffi::avformat_close_input(&mut fmt_ctx);
+            return Err(anyhow!("av_frame_alloc (rgba scratch)"));
+        }
+        (*rgba_scratch).width = width as i32;
+        (*rgba_scratch).height = height as i32;
+        (*rgba_scratch).format = ffi::AVPixelFormat::AV_PIX_FMT_RGBA as i32;
+        let buf_ret = ffi::av_frame_get_buffer(rgba_scratch, 0);
+        if buf_ret < 0 {
+            ffi::av_frame_free(&mut rgba_scratch);
+            ffi::sws_freeContext(sws_ctx);
+            ffi::avcodec_free_context(&mut codec_ctx);
+            ffi::avformat_close_input(&mut fmt_ctx);
+            return Err(anyhow!("av_frame_get_buffer (rgba): {}", av_err(buf_ret)));
         }
 
         let mut audio_stream_idx = -1;
@@ -417,6 +448,7 @@ fn open_decoder(path: &str) -> Result<DecoderCtx> {
             fmt_ctx,
             codec_ctx,
             sws_ctx,
+            rgba_scratch,
             stream_idx: video_idx,
             time_base,
             width,
@@ -425,7 +457,7 @@ fn open_decoder(path: &str) -> Result<DecoderCtx> {
             audio_stream_idx,
             audio_codec_ctx,
             swr_ctx,
-            audio_time_base,
+            _audio_time_base: audio_time_base,
         })
     }
 }
@@ -820,12 +852,10 @@ unsafe fn convert_frame(
     let h = ctx.height;
     let pts = pts_to_secs(pts_raw, ctx.time_base);
 
-    // Allocate a destination frame for RGBA
-    let dst_frame = ffi::av_frame_alloc();
-    (*dst_frame).width = w as i32;
-    (*dst_frame).height = h as i32;
-    (*dst_frame).format = ffi::AVPixelFormat::AV_PIX_FMT_RGBA as i32;
-    ffi::av_frame_get_buffer(dst_frame, 0);
+    let dst_frame = ctx.rgba_scratch;
+    if dst_frame.is_null() {
+        return Err(anyhow!("rgba scratch frame null"));
+    }
 
     let src_data: [*const u8; 4] = [
         (*frame).data[0],
@@ -853,8 +883,6 @@ unsafe fn convert_frame(
         let row_slice = std::slice::from_raw_parts(row_start, w as usize * pixel_bytes);
         rgba_data.extend_from_slice(row_slice);
     }
-
-    ffi::av_frame_free(&mut (dst_frame as *mut _));
 
     Ok(VideoFrame {
         pts,

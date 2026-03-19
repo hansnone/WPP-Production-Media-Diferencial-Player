@@ -1,4 +1,7 @@
-// renderer.rs — wgpu render pipeline for DiffPlayerQC
+//! Pipeline wgpu integrado con egui: texturas por canal, uniforms y shader `compare.wgsl`.
+//!
+//! Sube buffers RGBA desde el decoder a la GPU; la conversión YUV→RGB ocurre aún en CPU
+//! (`decoder`). Ver `docs/GPU_YUV_PIPELINE.md` para una posible ruta futura en shader.
 
 use bytemuck::{Pod, Zeroable};
 use egui_wgpu::wgpu;

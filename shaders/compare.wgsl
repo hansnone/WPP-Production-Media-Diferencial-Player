@@ -1,4 +1,5 @@
-// compare.wgsl — DiffPlayerQC comparison shader
+// DiffPlayerQC — shader de comparación A/B (cortina, diff, heatmap, lado a lado).
+// Debe coincidir con `ShaderUniforms` en `src/renderer.rs` (tamaños y orden de campos).
 
 // ---------------------------------------------------------------------------
 //  Uniform buffer (must match ShaderUniforms in renderer.rs)

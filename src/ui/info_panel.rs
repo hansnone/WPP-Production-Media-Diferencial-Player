@@ -343,7 +343,8 @@ fn channel_section(
                     kv(ui, "Stream video (meta)", &v);
                 }
                 {
-                    let v = if m.audio_stream_metadata.is_empty() || m.audio_stream_metadata == "—" {
+                    let v = if m.audio_stream_metadata.is_empty() || m.audio_stream_metadata == "—"
+                    {
                         "—".to_string()
                     } else {
                         truncate_meta(&m.audio_stream_metadata, 50)
@@ -365,9 +366,7 @@ fn truncate_meta(s: &str, max_len: usize) -> String {
 
 fn kv(ui: &mut Ui, key: &str, value: &str) {
     ui.label(RichText::new(key).size(10.5).weak());
-    ui.add(
-        egui::Label::new(RichText::new(value).size(10.5).monospace()).wrap(true),
-    );
+    ui.add(egui::Label::new(RichText::new(value).size(10.5).monospace()).wrap(true));
     ui.end_row();
 }
 

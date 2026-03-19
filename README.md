@@ -68,6 +68,8 @@ Requiere Rust 1.70+ y FFmpeg instalado en el sistema.
 git clone https://github.com/tu-usuario/diffplayerqc.git
 cd diffplayerqc
 cargo build --release
+# Binario más pequeño (menos rápido en CPU): ver docs/BUILD_PROFILES.md
+# cargo build --profile release-small
 ```
 
 Para Windows, usa `build.ps1` o `build.sh` para scripts de construcción automatizados.

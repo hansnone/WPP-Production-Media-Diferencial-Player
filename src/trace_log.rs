@@ -1,4 +1,4 @@
-// trace_log.rs — Human-readable trace log for DiffPlayerQC (one file per run)
+//! Log de trazas legible por sesión (un fichero por arranque, nombre con fecha/hora).
 
 use chrono::{Datelike, Timelike};
 use std::fs::File;

@@ -1,4 +1,4 @@
-// types.rs — Shared data types across all modules
+//! Tipos compartidos entre UI, decoders y renderer: frames, comandos y estado de reproducción.
 
 use serde::{Deserialize, Serialize};
 
@@ -36,11 +36,13 @@ pub enum DecoderCommand {
     Seek(f64),
     /// Decode exactly one frame forward from the current position.
     StepForward,
-    /// Seek back one frame from the current position.
+    /// Retroceso vía decoder (seek interno); la UI usa seek por FPS (`do_step_bck_inner`).
+    #[allow(dead_code)]
     StepBack,
     /// Terminate the decoder thread.
     Stop,
-    /// Change volume output
+    /// Reservado: el volumen se aplica en `rodio` desde la UI, no en el hilo decoder.
+    #[allow(dead_code)]
     SetVolume(f32),
 }
 
@@ -155,8 +157,9 @@ impl Default for Theme {
     }
 }
 
-/// Playback state shared between the UI and decoder coordination logic.
-/// Master clock: when playing, current_pts = playback_start_pts + elapsed since playback_start_instant.
+/// Estado de reproducción compartido entre la UI y la coordinación con los decoders.
+///
+/// Reloj maestro: al reproducir, `current_pts = playback_start_pts + elapsed` desde `playback_start_instant`.
 #[derive(Debug, Clone, Default)]
 pub struct PlaybackState {
     pub is_playing: bool,
@@ -174,4 +177,18 @@ pub struct PlaybackState {
 pub enum Channel {
     A,
     B,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Los discriminantes deben coincidir con `compare.wgsl` / uniforms.
+    #[test]
+    fn compare_mode_shader_indices() {
+        assert_eq!(CompareMode::SplitScreen as u32, 0);
+        assert_eq!(CompareMode::AbsDiff as u32, 1);
+        assert_eq!(CompareMode::Heatmap as u32, 2);
+        assert_eq!(CompareMode::SideBySide as u32, 3);
+    }
 }

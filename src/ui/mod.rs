@@ -1,4 +1,4 @@
-// ui/mod.rs
+//! Paneles egui: controles, información, timeline y temas visuales.
 
 pub mod controls;
 pub mod info_panel;

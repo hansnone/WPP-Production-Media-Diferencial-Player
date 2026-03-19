@@ -32,12 +32,18 @@ rodio = "0.19"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# Por defecto: velocidad para uso interactivo QC. Ver docs/BUILD_PROFILES.md.
 [profile.release]
-opt-level     = "s"     # Optimizar para tamaño
-lto           = true    # Link Time Optimization (más eficiente)
-codegen-units = 1       # Mejor optimización a costa de tiempo de compilación
-strip         = true    # Eliminar símbolos de depuración (reduce mucho el tamaño)
-panic         = "abort" # Reducir el tamaño eliminando el control de pánicos
+opt-level     = 3
+lto           = true
+codegen-units = 1
+strip         = true
+panic         = "abort"
+
+# Binario más pequeño para distribución (más lento en CPU).
+[profile.release-small]
+inherits      = "release"
+opt-level     = "s"
 
 [profile.dev]
 opt-level     = 1

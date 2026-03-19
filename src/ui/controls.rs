@@ -3,7 +3,7 @@
 use egui::{Color32, RichText, Ui};
 
 use crate::app::DiffPlayerApp;
-use crate::types::{CompareMode, DiffMode, Language, SafeZoneMode};
+use crate::types::{Channel, CompareMode, DiffMode, Language, SafeZoneMode};
 use crate::ui::theme::apply_theme;
 
 /// Renders the full menu bar: classic dropdown menus followed by an inline
@@ -40,6 +40,69 @@ pub fn show_menu_bar(ui: &mut Ui, app: &mut DiffPlayerApp) {
                     .clicked()
                 {
                     app.open_video_b(ui.ctx());
+                    ui.close_menu();
+                }
+
+                if ui
+                    .button(match app.view().lang {
+                        Language::Es => "Abrir secuencia EXR (A)…",
+                        Language::En => "Open EXR sequence (A)…",
+                        Language::Quenya => "Panya EXR sequence (A)…",
+                    })
+                    .clicked()
+                {
+                    if let Some(folder) = rfd::FileDialog::new().pick_folder() {
+                        app.start_proxy_from_exr_input_dir(folder, Channel::A, ui.ctx());
+                    }
+                    ui.close_menu();
+                }
+                if ui
+                    .button(match app.view().lang {
+                        Language::Es => "Abrir secuencia EXR (B)…",
+                        Language::En => "Open EXR sequence (B)…",
+                        Language::Quenya => "Panya EXR sequence (B)…",
+                    })
+                    .clicked()
+                {
+                    if let Some(folder) = rfd::FileDialog::new().pick_folder() {
+                        app.start_proxy_from_exr_input_dir(folder, Channel::B, ui.ctx());
+                    }
+                    ui.close_menu();
+                }
+                if ui
+                    .button(match app.view().lang {
+                        Language::Es => "Abrir archivos EXR (A)…",
+                        Language::En => "Open EXR files (A)…",
+                        Language::Quenya => "Panya EXR files (A)…",
+                    })
+                    .clicked()
+                {
+                    if let Some(files) = rfd::FileDialog::new()
+                        .add_filter("EXR", &["exr"])
+                        .pick_files()
+                    {
+                        if !files.is_empty() {
+                            app.start_proxy_from_exr_input_files(files, Channel::A, ui.ctx());
+                        }
+                    }
+                    ui.close_menu();
+                }
+                if ui
+                    .button(match app.view().lang {
+                        Language::Es => "Abrir archivos EXR (B)…",
+                        Language::En => "Open EXR files (B)…",
+                        Language::Quenya => "Panya EXR files (B)…",
+                    })
+                    .clicked()
+                {
+                    if let Some(files) = rfd::FileDialog::new()
+                        .add_filter("EXR", &["exr"])
+                        .pick_files()
+                    {
+                        if !files.is_empty() {
+                            app.start_proxy_from_exr_input_files(files, Channel::B, ui.ctx());
+                        }
+                    }
                     ui.close_menu();
                 }
 
@@ -410,11 +473,7 @@ pub fn show_menu_bar(ui: &mut Ui, app: &mut DiffPlayerApp) {
                     ui.close_menu();
                 }
                 if ui
-                    .radio_value(
-                        &mut safe_zone,
-                        SafeZoneMode::TvEbu,
-                        "TV: EBU R95 (16:9)",
-                    )
+                    .radio_value(&mut safe_zone, SafeZoneMode::TvEbu, "TV: EBU R95 (16:9)")
                     .clicked()
                 {
                     ui.close_menu();
@@ -623,7 +682,11 @@ pub fn show_mode_toolbar(ui: &mut Ui, app: &mut DiffPlayerApp) {
                     Language::En => "Split",
                     Language::Quenya => "Hyanda",
                 })
-                .fill(if is_split { active } else { Color32::TRANSPARENT }),
+                .fill(if is_split {
+                    active
+                } else {
+                    Color32::TRANSPARENT
+                }),
             )
             .clicked()
         {
@@ -709,7 +772,10 @@ pub fn show_mode_toolbar(ui: &mut Ui, app: &mut DiffPlayerApp) {
                 }
                 ui.label(if is_h { "Cort. (Y):" } else { "Cort. (X):" });
                 let mut sp = app.view().split_pos;
-                if ui.add(egui::Slider::new(&mut sp, 0.0..=1.0).fixed_decimals(2)).changed() {
+                if ui
+                    .add(egui::Slider::new(&mut sp, 0.0..=1.0).fixed_decimals(2))
+                    .changed()
+                {
                     app.view_mut().split_pos = sp;
                 }
             }
@@ -717,7 +783,11 @@ pub fn show_mode_toolbar(ui: &mut Ui, app: &mut DiffPlayerApp) {
                 ui.label("Amp:");
                 let mut amp = app.view().amplifier;
                 if ui
-                    .add(egui::Slider::new(&mut amp, 1.0..=50.0).step_by(0.5).suffix("×"))
+                    .add(
+                        egui::Slider::new(&mut amp, 1.0..=50.0)
+                            .step_by(0.5)
+                            .suffix("×"),
+                    )
                     .changed()
                 {
                     app.view_mut().amplifier = amp;
@@ -748,7 +818,11 @@ pub fn show_mode_toolbar(ui: &mut Ui, app: &mut DiffPlayerApp) {
                 ui.label("Amp:");
                 let mut amp = app.view().amplifier;
                 if ui
-                    .add(egui::Slider::new(&mut amp, 1.0..=50.0).step_by(0.5).suffix("×"))
+                    .add(
+                        egui::Slider::new(&mut amp, 1.0..=50.0)
+                            .step_by(0.5)
+                            .suffix("×"),
+                    )
                     .changed()
                 {
                     app.view_mut().amplifier = amp;
