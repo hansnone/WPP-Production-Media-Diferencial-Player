@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-03-25
+
+### Changed
+- Refactor parcial de la arquitectura de UI y del bucle principal: extracción de responsabilidades en `app/mod.rs` para reducir acoplamiento y mejorar mantenibilidad.
+- Unificación de i18n (ES/EN/Quenya) en paneles, menús y overlays clave, con funciones reutilizables de traducción.
+- Mejora de consistencia visual con tokens de diseño compartidos (`ui/design.rs`) aplicados en paneles y timeline.
+- Internacionalización de etiquetas de `DiffMode` y centralización de nombres de tema en módulos dedicados de i18n.
+
+### Fixed
+- Reducción de ruido de logging por frame (`info` a `trace`) para mejorar rendimiento y legibilidad de logs.
+- Eliminado `expect` frágil en el flujo de proxy FFmpeg con manejo de error seguro y recuperable.
+
 ## [1.2.14] - 2026-03-10
 
 ### Fixed

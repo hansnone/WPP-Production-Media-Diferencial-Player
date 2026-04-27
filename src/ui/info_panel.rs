@@ -4,9 +4,10 @@ use egui::{Color32, RichText, Ui};
 
 use crate::app::DiffPlayerApp;
 use crate::types::{ColorMetadata, Language};
+use crate::ui::design::{tr, FONT_LABEL, FONT_SUBTITLE, FONT_TITLE, FONT_VALUE};
 
 pub fn show(ui: &mut Ui, app: &mut DiffPlayerApp) {
-    let is_es = app.view().lang == Language::Es;
+    let lang = app.view().lang;
     let playback = app.playback().clone();
     let meta_a = app.decoder_a_meta().cloned();
     let meta_b = app.decoder_b_meta().cloned();
@@ -21,18 +22,19 @@ pub fn show(ui: &mut Ui, app: &mut DiffPlayerApp) {
 
         // ── App title ─────────────────────────────────────────────────────
         ui.label(
-            RichText::new("WPP Production media diferencial player")
-                .size(17.0)
+            RichText::new("WPP Production Media Differential Player")
+                .size(FONT_TITLE)
                 .strong()
                 .color(Color32::from_rgb(80, 160, 230)),
         );
         ui.label(
-            RichText::new(if is_es {
-                "Control de Calidad Frame a Frame"
-            } else {
-                "Frame-Accurate Video QC"
-            })
-            .size(11.0)
+            RichText::new(tr(
+                lang,
+                "Control de Calidad Frame a Frame",
+                "Frame-Accurate Video QC",
+                "QC vídeo nu per ranga",
+            ))
+            .size(FONT_SUBTITLE)
             .weak(),
         );
         ui.separator();
@@ -46,20 +48,20 @@ pub fn show(ui: &mut Ui, app: &mut DiffPlayerApp) {
             .num_columns(2)
             .spacing([8.0, 3.0])
             .show(ui, |ui| {
-                kv(ui, "PTS", &format!("{pts:.4} s"));
+                kv(ui, tr(lang, "PTS", "PTS", "PTS"), &format!("{pts:.4} s"));
                 kv(
                     ui,
-                    if is_es { "Cuadro" } else { "Frame" },
+                    tr(lang, "Cuadro", "Frame", "Quanta"),
                     &frame_n.to_string(),
                 );
                 kv(
                     ui,
-                    if is_es { "Zoom" } else { "Zoom" },
+                    tr(lang, "Zoom", "Zoom", "Hyanda"),
                     &format!("{zoom:.2}×"),
                 );
                 kv(
                     ui,
-                    if is_es { "Paneo" } else { "Pan UV" },
+                    tr(lang, "Paneo", "Pan UV", "Pan"),
                     &format!("({pan_u:.3}, {pan_v:.3})"),
                 );
             });
@@ -82,11 +84,11 @@ pub fn show(ui: &mut Ui, app: &mut DiffPlayerApp) {
         // ── Video A info ──────────────────────────────────────────────────
         channel_section(
             ui,
-            if is_es { "VÍDEO A" } else { "VIDEO A" },
+            tr(lang, "VÍDEO A", "VIDEO A", "VÍDEO A"),
             color_a,
             path_a.as_deref(),
             meta_a.as_ref(),
-            is_es,
+            lang,
         );
 
         ui.add_space(8.0);
@@ -95,11 +97,11 @@ pub fn show(ui: &mut Ui, app: &mut DiffPlayerApp) {
         // ── Video B info ──────────────────────────────────────────────────
         channel_section(
             ui,
-            if is_es { "VÍDEO B" } else { "VIDEO B" },
+            tr(lang, "VÍDEO B", "VIDEO B", "VÍDEO B"),
             color_b,
             path_b.as_deref(),
             meta_b.as_ref(),
-            is_es,
+            lang,
         );
 
         ui.add_space(8.0);
@@ -118,57 +120,49 @@ pub fn show(ui: &mut Ui, app: &mut DiffPlayerApp) {
                     .rounding(4.0)
                     .show(ui, |ui| {
                         ui.label(
-                            RichText::new(if is_es {
-                                "⚠ ¡Discrepancia de metadatos de color!"
-                            } else {
-                                "⚠ Color metadata mismatch detected!"
-                            })
+                            RichText::new(tr(
+                                lang,
+                                "⚠ ¡Discrepancia de metadatos de color!",
+                                "⚠ Color metadata mismatch detected!",
+                                "⚠ Cala meta winya!",
+                            ))
                             .color(Color32::from_rgb(255, 180, 60))
                             .size(11.5)
                             .strong(),
                         );
                         if ma.colorspace != mb.colorspace {
                             ui.label(
-                                RichText::new(if is_es {
-                                    format!("  Espacio: {} ≠ {}", ma.colorspace, mb.colorspace)
-                                } else {
-                                    format!("  Colorspace: {} ≠ {}", ma.colorspace, mb.colorspace)
-                                })
-                                .size(10.5)
+                                RichText::new(format!(
+                                    "  {}: {} ≠ {}",
+                                    tr(lang, "Espacio", "Colorspace", "Cala"),
+                                    ma.colorspace,
+                                    mb.colorspace
+                                ))
+                                .size(FONT_LABEL)
                                 .color(Color32::LIGHT_GRAY),
                             );
                         }
                         if ma.color_transfer != mb.color_transfer {
                             ui.label(
-                                RichText::new(if is_es {
-                                    format!(
-                                        "  Transferencia: {} ≠ {}",
-                                        ma.color_transfer, mb.color_transfer
-                                    )
-                                } else {
-                                    format!(
-                                        "  Transfer: {} ≠ {}",
-                                        ma.color_transfer, mb.color_transfer
-                                    )
-                                })
-                                .size(10.5)
+                                RichText::new(format!(
+                                    "  {}: {} ≠ {}",
+                                    tr(lang, "Transferencia", "Transfer", "Tíra"),
+                                    ma.color_transfer,
+                                    mb.color_transfer
+                                ))
+                                .size(FONT_LABEL)
                                 .color(Color32::LIGHT_GRAY),
                             );
                         }
                         if ma.color_primaries != mb.color_primaries {
                             ui.label(
-                                RichText::new(if is_es {
-                                    format!(
-                                        "  Primarios: {} ≠ {}",
-                                        ma.color_primaries, mb.color_primaries
-                                    )
-                                } else {
-                                    format!(
-                                        "  Primaries: {} ≠ {}",
-                                        ma.color_primaries, mb.color_primaries
-                                    )
-                                })
-                                .size(10.5)
+                                RichText::new(format!(
+                                    "  {}: {} ≠ {}",
+                                    tr(lang, "Primarios", "Primaries", "Hairë"),
+                                    ma.color_primaries,
+                                    mb.color_primaries
+                                ))
+                                .size(FONT_LABEL)
                                 .color(Color32::LIGHT_GRAY),
                             );
                         }
@@ -181,35 +175,49 @@ pub fn show(ui: &mut Ui, app: &mut DiffPlayerApp) {
         // ── Usage hints ───────────────────────────────────────────────────
         ui.separator();
         ui.label(
-            RichText::new(if is_es { "Atajos" } else { "Shortcuts" })
-                .size(11.0)
+            RichText::new(tr(lang, "Atajos", "Shortcuts", "Quanta ranga"))
+                .size(FONT_SUBTITLE)
                 .strong()
                 .weak(),
         );
-        let mut hints: Vec<(&str, &str)> = vec![];
-        if is_es {
-            hints.push(("Espacio", "Reproducir / Pausa"));
-            hints.push(("← →", "Avanzar frame"));
-            hints.push(("Rueda", "Acercar / Alejar"));
-            hints.push(("Arrastrar", "Desplazar"));
-            hints.push(("Doble clk / R", "Restaurar zoom"));
-            hints.push(("Inicio", "Ir al principio"));
-            hints.push(("S", "Intercambiar A y B"));
-            hints.push(("F", "Capturar pantalla (PNG)"));
-            hints.push(("3", "Ocultar / Mostrar Interfaz"));
-            hints.push(("4..9", "Ajustes rápidos de zoom"));
-        } else {
-            hints.push(("Space", "Play / Pause"));
-            hints.push(("← →", "Step frame"));
-            hints.push(("Scroll", "Zoom in / out"));
-            hints.push(("Drag", "Pan"));
-            hints.push(("Dbl-clk / R", "Reset zoom"));
-            hints.push(("Home", "Go to start"));
-            hints.push(("S", "Swap A and B"));
-            hints.push(("F", "Take screenshot (PNG)"));
-            hints.push(("3", "Toggle UI / HUD"));
-            hints.push(("4..9", "Quick zoom presets"));
-        }
+        let hints: Vec<(&str, &str)> = match lang {
+            Language::Es => vec![
+                ("Espacio", "Reproducir / Pausa"),
+                ("← →", "Avanzar frame"),
+                ("Rueda", "Acercar / Alejar"),
+                ("Arrastrar", "Desplazar"),
+                ("Doble clk / R", "Restaurar zoom"),
+                ("Inicio", "Ir al principio"),
+                ("S", "Intercambiar A y B"),
+                ("F", "Capturar pantalla (PNG)"),
+                ("3", "Ocultar / Mostrar Interfaz"),
+                ("4..9", "Ajustes rápidos de zoom"),
+            ],
+            Language::En => vec![
+                ("Space", "Play / Pause"),
+                ("← →", "Step frame"),
+                ("Scroll", "Zoom in / out"),
+                ("Drag", "Pan"),
+                ("Dbl-clk / R", "Reset zoom"),
+                ("Home", "Go to start"),
+                ("S", "Swap A and B"),
+                ("F", "Take screenshot (PNG)"),
+                ("3", "Toggle UI / HUD"),
+                ("4..9", "Quick zoom presets"),
+            ],
+            Language::Quenya => vec![
+                ("Space", "Lir / Talta"),
+                ("← →", "Quanta ranga"),
+                ("Scroll", "Hyanda"),
+                ("Drag", "Pano"),
+                ("Dbl-clk / R", "En-panya zoom"),
+                ("Home", "Yessë"),
+                ("S", "Quista A ar B"),
+                ("F", "Harya PNG"),
+                ("3", "HUD"),
+                ("4..9", "Zoom ve"),
+            ],
+        };
         egui::Grid::new("hints_grid")
             .num_columns(2)
             .spacing([6.0, 2.0])
@@ -218,10 +226,10 @@ pub fn show(ui: &mut Ui, app: &mut DiffPlayerApp) {
                     ui.label(
                         RichText::new(key)
                             .monospace()
-                            .size(10.5)
+                            .size(FONT_LABEL)
                             .color(Color32::from_rgb(150, 200, 255)),
                     );
-                    ui.label(RichText::new(desc).size(10.5).weak());
+                    ui.label(RichText::new(desc).size(FONT_LABEL).weak());
                     ui.end_row();
                 }
             });
@@ -236,7 +244,7 @@ fn channel_section(
     accent: Color32,
     path: Option<&str>,
     meta: Option<&ColorMetadata>,
-    is_es: bool,
+    lang: Language,
 ) {
     ui.label(RichText::new(label).size(12.0).strong().color(accent));
 
@@ -246,17 +254,18 @@ fn channel_section(
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default();
         ui.label(RichText::new(&filename).size(11.5).strong());
-        ui.label(RichText::new(path).size(9.5).weak().italics());
+        ui.label(RichText::new(path).size(FONT_VALUE).weak().italics());
     } else {
         ui.label(
-            RichText::new(if is_es {
-                "Ningún archivo cargado"
-            } else {
-                "No file loaded"
-            })
+            RichText::new(tr(
+                lang,
+                "Ningún archivo cargado",
+                "No file loaded",
+                "La parma",
+            ))
             .weak()
             .italics()
-            .size(11.0),
+            .size(FONT_VALUE),
         );
         return;
     }
@@ -269,43 +278,43 @@ fn channel_section(
             .show(ui, |ui| {
                 kv(
                     ui,
-                    if is_es { "Resolución" } else { "Resolution" },
+                    tr(lang, "Resolución", "Resolution", "Palúrë"),
                     &format!("{}×{}", m.width, m.height),
                 );
-                kv(ui, "FPS", &format!("{:.4}", m.fps));
+                kv(ui, tr(lang, "FPS", "FPS", "FPS"), &format!("{:.4}", m.fps));
                 kv(
                     ui,
-                    if is_es { "Duración" } else { "Duration" },
+                    tr(lang, "Duración", "Duration", "Lúmë"),
                     &format_dur(m.duration_secs),
                 );
                 kv(
                     ui,
-                    if is_es { "Tasa bits" } else { "Bitrate" },
+                    tr(lang, "Tasa bits", "Bitrate", "Tix"),
                     &format!("{} kbps", m.bitrate_kbps),
                 );
                 kv(
                     ui,
-                    if is_es { "Fmt Píxel" } else { "Pixel Fmt" },
+                    tr(lang, "Fmt Píxel", "Pixel Fmt", "Píxel"),
                     &m.pixel_format,
                 );
                 kv(
                     ui,
-                    if is_es { "Espacio" } else { "Colorspace" },
+                    tr(lang, "Espacio", "Colorspace", "Cala"),
                     &m.colorspace,
                 );
                 kv(
                     ui,
-                    if is_es { "Transfer" } else { "Transfer" },
+                    tr(lang, "Transfer", "Transfer", "Tíra"),
                     &m.color_transfer,
                 );
                 kv(
                     ui,
-                    if is_es { "Primarios" } else { "Primaries" },
+                    tr(lang, "Primarios", "Primaries", "Hairë"),
                     &m.color_primaries,
                 );
                 kv(
                     ui,
-                    if is_es { "Códec video" } else { "Video codec" },
+                    tr(lang, "Códec video", "Video codec", "Códec vídeo"),
                     if m.video_codec.is_empty() {
                         "—"
                     } else {
@@ -314,7 +323,7 @@ fn channel_section(
                 );
                 kv(
                     ui,
-                    if is_es { "Códec audio" } else { "Audio codec" },
+                    tr(lang, "Códec audio", "Audio codec", "Códec audio"),
                     if m.audio_codec.is_empty() {
                         "—"
                     } else {
@@ -323,11 +332,12 @@ fn channel_section(
                 );
                 kv(
                     ui,
-                    if is_es {
-                        "Marca contenedor"
-                    } else {
-                        "Major brand"
-                    },
+                    tr(
+                        lang,
+                        "Marca contenedor",
+                        "Major brand",
+                        "Marca",
+                    ),
                     if m.major_brand.is_empty() || m.major_brand == "—" {
                         "—"
                     } else {
@@ -340,7 +350,16 @@ fn channel_section(
                     } else {
                         truncate_meta(&m.video_stream_metadata, 50)
                     };
-                    kv(ui, "Stream video (meta)", &v);
+                    kv(
+                        ui,
+                        tr(
+                            lang,
+                            "Stream vídeo (meta)",
+                            "Stream video (meta)",
+                            "Stream vídeo",
+                        ),
+                        &v,
+                    );
                 }
                 {
                     let v = if m.audio_stream_metadata.is_empty() || m.audio_stream_metadata == "—"
@@ -349,7 +368,16 @@ fn channel_section(
                     } else {
                         truncate_meta(&m.audio_stream_metadata, 50)
                     };
-                    kv(ui, "Stream audio (meta)", &v);
+                    kv(
+                        ui,
+                        tr(
+                            lang,
+                            "Stream audio (meta)",
+                            "Stream audio (meta)",
+                            "Stream audio",
+                        ),
+                        &v,
+                    );
                 }
             });
     }
@@ -365,8 +393,8 @@ fn truncate_meta(s: &str, max_len: usize) -> String {
 }
 
 fn kv(ui: &mut Ui, key: &str, value: &str) {
-    ui.label(RichText::new(key).size(10.5).weak());
-    ui.add(egui::Label::new(RichText::new(value).size(10.5).monospace()).wrap(true));
+    ui.label(RichText::new(key).size(FONT_LABEL).weak());
+    ui.add(egui::Label::new(RichText::new(value).size(FONT_VALUE).monospace()).wrap(true));
     ui.end_row();
 }
 

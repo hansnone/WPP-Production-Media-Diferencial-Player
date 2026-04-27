@@ -160,7 +160,11 @@ fn run_exr_to_video_proxy_in_background(
             }
         };
 
-        let stderr = child.stderr.take().expect("stderr piped");
+        let Some(stderr) = child.stderr.take() else {
+            log::error!("ffmpeg stderr was not piped as expected");
+            running.store(false, Ordering::Relaxed);
+            return;
+        };
         let reader = BufReader::new(stderr);
         // Parse lines like "frame=  123 fps=..." to update progress
         for line in reader.lines().flatten() {

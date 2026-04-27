@@ -1,18 +1,19 @@
 // ui/timeline.rs — Scrubber / playhead widget
 
-use egui::{Color32, Pos2, Rect, Sense, Ui, Vec2};
+use egui::{Pos2, Rect, Sense, Ui, Vec2};
 
 use crate::app::DiffPlayerApp;
 use crate::types::Language;
+use crate::ui::design::{tr, ACCENT_PRIMARY, FONT_MONO, FONT_MONO_SMALL, TIMELINE_HEIGHT};
 
 /// Draw the timeline scrubber at the bottom of the window.
 pub fn show(ui: &mut Ui, app: &mut DiffPlayerApp) {
-    let is_es = app.view().lang == Language::Es;
+    let lang = app.view().lang;
     let duration = app.playback().duration_a.max(app.playback().duration_b);
 
-    // Always reserve the full width, 44 px tall
+    // Always reserve the full width
     let available_width = ui.available_width();
-    let desired_size = Vec2::new(available_width, 44.0);
+    let desired_size = Vec2::new(available_width, TIMELINE_HEIGHT);
     let (rect, response) = ui.allocate_exact_size(desired_size, Sense::click_and_drag());
 
     let painter = ui.painter();
@@ -29,12 +30,13 @@ pub fn show(ui: &mut Ui, app: &mut DiffPlayerApp) {
         painter.text(
             rect.center(),
             egui::Align2::CENTER_CENTER,
-            if is_es {
-                "──── línea de tiempo ────"
-            } else {
-                "──── timeline ────"
-            },
-            egui::FontId::proportional(11.0),
+            tr(
+                lang,
+                "──── línea de tiempo ────",
+                "──── timeline ────",
+                "──── línë —───",
+            ),
+            egui::FontId::proportional(FONT_MONO),
             ui.visuals().text_color().gamma_multiply(0.3),
         );
         return;
@@ -48,7 +50,7 @@ pub fn show(ui: &mut Ui, app: &mut DiffPlayerApp) {
     painter.rect_filled(
         Rect::from_min_max(track_rect.min, Pos2::new(played_right, track_rect.max.y)),
         2.0,
-        Color32::from_rgb(80, 160, 230),
+        ACCENT_PRIMARY,
     );
 
     // ── Playhead handle ───────────────────────────────────────────────────
@@ -65,13 +67,13 @@ pub fn show(ui: &mut Ui, app: &mut DiffPlayerApp) {
     painter.circle_filled(
         handle_center,
         handle_radius,
-        Color32::from_rgb(80, 160, 230),
+        ACCENT_PRIMARY,
     );
 
     // ── Timecode labels ───────────────────────────────────────────────────
     let current_label = format_timecode(current_pts);
     let duration_label = format_timecode(duration);
-    let font = egui::FontId::monospace(11.0);
+    let font = egui::FontId::monospace(FONT_MONO);
     let dim = ui.visuals().text_color().gamma_multiply(0.7);
 
     painter.text(
@@ -92,12 +94,17 @@ pub fn show(ui: &mut Ui, app: &mut DiffPlayerApp) {
     // ── Frame number ──────────────────────────────────────────────────────
     let fps_a = app.decoder_a_meta().map(|m| m.fps).unwrap_or(25.0);
     let frame_num = (current_pts * fps_a).round() as u64;
+    let frame_prefix = match lang {
+        Language::Es => "Cuad.",
+        Language::En => "Frm.",
+        Language::Quenya => "Fr.",
+    };
     painter.text(
         handle_center - Vec2::new(0.0, 18.0),
         egui::Align2::CENTER_CENTER,
-        format!("Fr.{frame_num}"),
-        egui::FontId::monospace(10.0),
-        Color32::from_rgb(80, 160, 230),
+        format!("{frame_prefix}{frame_num}"),
+        egui::FontId::monospace(FONT_MONO_SMALL),
+        ACCENT_PRIMARY,
     );
 
     // ── Seek on click / drag ──────────────────────────────────────────────

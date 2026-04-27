@@ -44,6 +44,12 @@ DiffPlayerQC es un reproductor avanzado multiplataforma (Windows, macOS, Linux) 
 - **Portabilidad Total:** El sistema de auto-empaquetado distribuye el programa sin requerir dependencias externas del sistema (los binarios de FFmpeg se integran con la aplicación).
 - **Instaladores Nativos:** Empaquetado en un archivo portátil limpio para Windows y distribuido en formato `.pkg` fácil de instalar para macOS.
 
+## 🆕 Novedades en la Versión 1.3.0
+- **Arquitectura más mantenible:** Refactor del bucle principal (`update`) con extracción de responsabilidades para HUD, ventanas modales, teclado y audio.
+- **Sistema de diseño unificado:** Tokens visuales compartidos para tipografía/acentos en paneles y timeline.
+- **i18n ampliado:** Cobertura consistente ES/EN/Quenya en menús, overlays, panel de audio y etiquetas de modos de diferencia.
+- **Calidad reforzada:** Nuevas pruebas unitarias para utilidades de traducción y consistencia de menús de tema.
+
 ## 🆕 Novedades en la Versión 1.2.14
 - **Estabilidad de Reproducción:** Solución garantizada para la reproducción fluida mientras se mantiene el sistema "Turbo Stepping" para búsquedas manuales rápidas.
 

@@ -1,3 +1,7 @@
+//! egui visual presets. Selection/hover accents are defined per palette below; the timeline and
+//! several controls use [`crate::ui::design::ACCENT_PRIMARY`] so the default blue accent stays
+//! consistent across widgets.
+
 use egui::{Color32, Context, Stroke, Visuals};
 
 pub fn apply_theme(ctx: &Context, theme: crate::types::Theme) {

@@ -655,6 +655,396 @@ impl DiffPlayerApp {
         }
         ctx.request_repaint();
     }
+
+    fn complete_proxy_if_ready(&mut self, ctx: &egui::Context) {
+        if self.proxy_running() || self.proxy_target_channel.is_none() || self.proxy_temp_dir.is_none() {
+            return;
+        }
+        let dir = self.proxy_temp_dir.take().unwrap();
+        let channel = self.proxy_target_channel.take().unwrap();
+        let proxy_video = proxy_bridge::proxy_video_path(&dir);
+        if proxy_video.exists() {
+            self.proxy_temp_dirs.push(dir);
+            let path_str = proxy_video.to_string_lossy().to_string();
+            self.open_video_from_path(path_str, channel, ctx);
+        }
+    }
+
+    fn update_master_clock_and_repaint(&mut self, ctx: &egui::Context, is_first_frame: bool) {
+        if !self.playback.is_playing {
+            return;
+        }
+        if let Some(start) = self.playback.playback_start_instant {
+            let elapsed = start.elapsed().as_secs_f64();
+            self.playback.current_pts = self.playback.playback_start_pts + elapsed;
+            let max_duration = self.playback.duration_a.max(self.playback.duration_b);
+            if max_duration > 0.0 {
+                if self.playback.current_pts >= max_duration {
+                    self.do_seek(0.0, ctx);
+                } else {
+                    self.playback.current_pts = self.playback.current_pts.clamp(0.0, max_duration);
+                }
+            }
+        }
+        // Repintado: intervalo corto con audio activo (rodio) para evitar underruns.
+        if !is_first_frame {
+            let fps = self
+                .decoder_a_meta()
+                .or_else(|| self.decoder_b_meta())
+                .map(|m| m.fps)
+                .unwrap_or(25.0);
+            let max_delay_ms = if self.sink_a.is_some() || self.sink_b.is_some() {
+                playback::REPINT_AUDIO_MAX_MS
+            } else {
+                playback::REPINT_IDLE_MAX_MS
+            };
+            if fps > 0.0 {
+                let delay =
+                    playback::next_frame_repaint_delay(fps, self.playback.current_pts, max_delay_ms);
+                ctx.request_repaint_after(delay);
+            } else {
+                ctx.request_repaint();
+            }
+        }
+    }
+
+    fn drain_audio_and_update_levels(&mut self) {
+        const LEVEL_DECAY: f32 = 0.92;
+        if !self.playback.is_playing {
+            return;
+        }
+        let mut received_a = false;
+        let mut received_b = false;
+        if let Some(dec) = &mut self.decoder_a {
+            if let Some(sink) = &self.sink_a {
+                while let Ok(audio) = dec.audio_rx.try_recv() {
+                    received_a = true;
+                    let peak = audio.samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+                    self.view.audio_level_a =
+                        (self.view.audio_level_a * LEVEL_DECAY + peak).max(peak).min(1.0);
+                    let buf = rodio::buffer::SamplesBuffer::new(
+                        audio.channels,
+                        audio.sample_rate,
+                        audio.samples,
+                    );
+                    sink.append(buf);
+                }
+            }
+        }
+        if !received_a {
+            self.view.audio_level_a *= LEVEL_DECAY;
+        }
+        if let Some(dec) = &mut self.decoder_b {
+            if let Some(sink) = &self.sink_b {
+                while let Ok(audio) = dec.audio_rx.try_recv() {
+                    received_b = true;
+                    let peak = audio.samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+                    self.view.audio_level_b =
+                        (self.view.audio_level_b * LEVEL_DECAY + peak).max(peak).min(1.0);
+                    let buf = rodio::buffer::SamplesBuffer::new(
+                        audio.channels,
+                        audio.sample_rate,
+                        audio.samples,
+                    );
+                    sink.append(buf);
+                }
+            }
+        }
+        if !received_b {
+            self.view.audio_level_b *= LEVEL_DECAY;
+        }
+    }
+
+    fn apply_sink_volumes(&mut self) {
+        if let Some(sink) = &self.sink_a {
+            if self.view.mute_a {
+                sink.set_volume(0.0);
+            } else {
+                sink.set_volume(self.view.vol_a);
+            }
+        }
+        if let Some(sink) = &self.sink_b {
+            if self.view.mute_b {
+                sink.set_volume(0.0);
+            } else {
+                sink.set_volume(self.view.vol_b);
+            }
+        }
+    }
+
+    fn handle_keyboard_input(&mut self, ctx: &egui::Context) {
+        ctx.input(|i| {
+            if i.key_pressed(egui::Key::Space) {
+                self.pending_play_pause_toggle = true;
+            }
+            if i.key_pressed(egui::Key::ArrowRight) {
+                self.pending_key_action = PendingKeyAction::StepFwd;
+            }
+            if i.key_pressed(egui::Key::ArrowLeft) {
+                self.pending_key_action = PendingKeyAction::StepBck;
+            }
+            if i.key_pressed(egui::Key::Home) {
+                self.pending_key_action = PendingKeyAction::Seek(0.0);
+            }
+            if i.key_pressed(egui::Key::Y) {
+                self.pending_key_action = PendingKeyAction::CycleMode;
+            }
+            if i.key_pressed(egui::Key::L) {
+                self.pending_key_action = PendingKeyAction::SideBySide;
+            }
+            if i.key_pressed(egui::Key::Num1) {
+                self.pending_key_action = PendingKeyAction::SplitPos0;
+            }
+            if i.key_pressed(egui::Key::Num2) {
+                self.pending_key_action = PendingKeyAction::SplitPos1;
+            }
+            if i.key_pressed(egui::Key::Num3) {
+                self.pending_key_action = PendingKeyAction::ToggleHud;
+            }
+            if i.key_pressed(egui::Key::Num4) {
+                self.pending_key_action = PendingKeyAction::Zoom(1.0);
+            }
+            if i.key_pressed(egui::Key::Num5) {
+                self.pending_key_action = PendingKeyAction::Zoom(0.5);
+            }
+            if i.key_pressed(egui::Key::Num6) {
+                self.pending_key_action = PendingKeyAction::Zoom(1.0);
+            }
+            if i.key_pressed(egui::Key::Num7) {
+                self.pending_key_action = PendingKeyAction::Zoom(2.0);
+            }
+            if i.key_pressed(egui::Key::Num8) {
+                self.pending_key_action = PendingKeyAction::Zoom(4.0);
+            }
+            if i.key_pressed(egui::Key::Num9) {
+                self.pending_key_action = PendingKeyAction::Zoom(8.0);
+            }
+            if i.key_pressed(egui::Key::F) {
+                log::trace!("Key 'F': xcap OS-native capture");
+                let dir_for_thread = self.view.screenshot_dir.clone();
+
+                std::thread::spawn(move || {
+                    let mut success = false;
+                    log::trace!("xcap: scanning OS windows");
+                    if let Ok(windows) = xcap::Window::all() {
+                        for window in windows {
+                            if let Ok(title) = window.title() {
+                                if title.contains("Production Media") || title.contains("Diferencial") {
+                                    log::trace!("xcap: window -> {}", title);
+                                    if let Ok(img_buf) = window.capture_image() {
+                                        if let Some(dir) = dir_for_thread.as_ref() {
+                                            let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
+                                            let filename = format!("WPP_QC_{timestamp}.png");
+                                            let path = dir.join(filename);
+                                            log::trace!("xcap: writing PNG to {:?}", path);
+
+                                            if let Err(e) = img_buf.save(&path) {
+                                                log::error!("xcap disk write error: {}", e);
+                                            } else {
+                                                log::trace!("xcap: screenshot saved");
+                                                success = true;
+                                            }
+                                        }
+                                    } else {
+                                        log::error!("xcap failed to read window buffer");
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if !success {
+                        log::error!("xcap: target WPP window not found or capture failed");
+                    }
+                });
+            }
+            if i.key_pressed(egui::Key::R) {
+                self.pending_key_action = PendingKeyAction::ResetZoomPan;
+            }
+            if i.key_pressed(egui::Key::S) {
+                self.pending_key_action = PendingKeyAction::SwapVideos;
+            }
+
+            let now = i.time;
+            let repeat_delay = 0.25;
+            let repeat_interval = 0.05;
+
+            if i.key_down(egui::Key::ArrowRight) {
+                if i.key_pressed(egui::Key::ArrowRight)
+                    || (now - self.last_step_time) > repeat_interval
+                {
+                    let delay_ok = (now - self.last_step_time) > repeat_delay;
+                    if i.key_pressed(egui::Key::ArrowRight) || delay_ok {
+                        self.pending_key_action = PendingKeyAction::StepFwd;
+                        self.last_step_time = now;
+                    }
+                }
+            } else if i.key_down(egui::Key::ArrowLeft) {
+                if i.key_pressed(egui::Key::ArrowLeft)
+                    || (now - self.last_step_time) > repeat_interval
+                {
+                    let delay_ok = (now - self.last_step_time) > repeat_delay;
+                    if i.key_pressed(egui::Key::ArrowLeft) || delay_ok {
+                        self.pending_key_action = PendingKeyAction::StepBck;
+                        self.last_step_time = now;
+                    }
+                }
+            } else {
+                self.last_step_time = 0.0;
+            }
+        });
+    }
+
+    fn show_hud_panels(&mut self, ctx: &egui::Context, is_first_frame: bool) {
+        if !self.view.show_hud || is_first_frame {
+            return;
+        }
+        egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
+            crate::ui::controls::show_menu_bar(ui, self);
+        });
+        if self.view.show_left_panel {
+            egui::SidePanel::left("info_panel")
+                .resizable(true)
+                .default_width(260.0)
+                .min_width(200.0)
+                .max_width(340.0)
+                .show(ctx, |ui| {
+                    crate::ui::info_panel::show(ui, self);
+                });
+        }
+        if self.view.show_right_panel {
+            egui::SidePanel::right("audio_panel")
+                .resizable(true)
+                .default_width(110.0)
+                .min_width(90.0)
+                .max_width(220.0)
+                .show(ctx, |ui| {
+                    crate::ui::controls::show_audio_panel(ui, self);
+                });
+        }
+        egui::TopBottomPanel::bottom("timeline").show(ctx, |ui| {
+            crate::ui::timeline::show(ui, self);
+        });
+    }
+
+    fn show_clean_feed_viewport(&mut self, ctx: &egui::Context) {
+        if !self.view.show_clean_feed_window {
+            return;
+        }
+        let mut show = self.view.show_clean_feed_window;
+        let renderer_clone = Arc::clone(&self.renderer);
+        let title = crate::ui::controls::clean_feed_window_title(self.view.lang);
+
+        ctx.show_viewport_immediate(
+            egui::ViewportId::from_hash_of("clean_feed_viewport"),
+            egui::ViewportBuilder::default()
+                .with_title(title)
+                .with_inner_size([1280.0, 720.0])
+                .with_always_on_top(),
+            |ctx, _class| {
+                if ctx.input(|i| i.viewport().close_requested()) {
+                    show = false;
+                }
+
+                let fps = self
+                    .decoder_a_meta()
+                    .map(|m| m.fps)
+                    .filter(|f| *f > 0.0)
+                    .unwrap_or(24.0);
+                let overlay_text = crate::ui::controls::clean_feed_overlay_text(
+                    self.view.lang,
+                    self.view.mode,
+                    self.view.split_pos,
+                    self.playback.current_pts,
+                    fps,
+                );
+
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let available = ui.available_rect_before_wrap();
+                    ui.allocate_rect(available, egui::Sense::hover());
+                    ui.painter().add(egui_wgpu::Callback::new_paint_callback(
+                        available,
+                        RenderCallback {
+                            renderer: renderer_clone.clone(),
+                        },
+                    ));
+
+                    let text_pos = available.min + egui::vec2(20.0, 20.0);
+                    let galley = ui.painter().layout_no_wrap(
+                        overlay_text,
+                        egui::FontId::proportional(22.0),
+                        egui::Color32::WHITE,
+                    );
+                    let bg_rect = galley.rect.translate(text_pos.to_vec2()).expand(6.0);
+                    ui.painter().rect_filled(
+                        bg_rect,
+                        4.0,
+                        egui::Color32::from_black_alpha(150),
+                    );
+                    ui.painter().galley(text_pos, galley, egui::Color32::WHITE);
+                });
+            },
+        );
+
+        self.view.show_clean_feed_window = show;
+    }
+
+    fn show_proxy_progress_window(&mut self, ctx: &egui::Context) {
+        if !self.proxy_running() {
+            return;
+        }
+        let progress = self.proxy_progress();
+        let cap = crate::ui::controls::proxy_loading_caption(self.view.lang);
+        egui::Window::new(cap)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .default_width(320.0)
+            .show(ctx, |ui| {
+                ui.vertical_centered(|ui| {
+                    ui.add_space(12.0);
+                    ui.label(cap);
+                    ui.add_space(8.0);
+                    ui.add(egui::ProgressBar::new(progress.clamp(0.0, 1.0)).show_percentage());
+                    ui.add_space(12.0);
+                });
+            });
+    }
+
+    fn show_error_modal_if_any(&mut self, ctx: &egui::Context) {
+        let (title, msg) = match (&self.error_title, &self.error_message) {
+            (Some(t), Some(m)) => (t.clone(), m.clone()),
+            _ => return,
+        };
+        let lang = self.view.lang;
+        let mut open = true;
+        egui::Window::new(
+            egui::RichText::new(&title)
+                .color(egui::Color32::from_rgb(255, 100, 100))
+                .strong(),
+        )
+        .collapsible(false)
+        .resizable(false)
+        .pivot(egui::Align2::CENTER_CENTER)
+        .default_pos(ctx.screen_rect().center())
+        .fixed_size(egui::vec2(400.0, 150.0))
+        .show(ctx, |ui| {
+            ui.vertical_centered(|ui| {
+                ui.add_space(15.0);
+                ui.label(egui::RichText::new(&msg).size(15.0));
+                ui.add_space(25.0);
+                let ok = crate::ui::design::dialog_ok(lang);
+                if ui.button(egui::RichText::new(format!("   {ok}   ")).strong()).clicked() {
+                    open = false;
+                }
+                ui.add_space(10.0);
+            });
+        });
+        if !open {
+            self.error_title = None;
+            self.error_message = None;
+        }
+    }
 }
 
 impl eframe::App for DiffPlayerApp {
@@ -722,63 +1112,14 @@ impl eframe::App for DiffPlayerApp {
             }
             PendingKeyAction::SwapVideos => self.swap_videos_inner(ctx),
         }
-        // When proxy generation just finished: load the single proxy video (proxy.mkv) into the target channel.
-        if !self.proxy_running()
-            && self.proxy_target_channel.is_some()
-            && self.proxy_temp_dir.is_some()
-        {
-            let dir = self.proxy_temp_dir.take().unwrap();
-            let channel = self.proxy_target_channel.take().unwrap();
-            let proxy_video = proxy_bridge::proxy_video_path(&dir);
-            if proxy_video.exists() {
-                self.proxy_temp_dirs.push(dir);
-                let path_str = proxy_video.to_string_lossy().to_string();
-                self.open_video_from_path(path_str, channel, ctx);
-            }
-        }
-        log::info!("App::update() called");
+        // When proxy generation just finished: load proxy.mkv into the target channel.
+        self.complete_proxy_if_ready(ctx);
+        log::trace!("App::update() tick");
         // First frame: don't request repaint so macOS can finish present.
         // Later: only schedule repaint when playing (request_repaint_after); when paused, input triggers repaint.
 
-        // Master clock: when playing, current_pts = playback_start_pts + elapsed (no stable_dt)
-        if self.playback.is_playing {
-            if let Some(start) = self.playback.playback_start_instant {
-                let elapsed = start.elapsed().as_secs_f64();
-                self.playback.current_pts = self.playback.playback_start_pts + elapsed;
-                let max_duration = self.playback.duration_a.max(self.playback.duration_b);
-                if max_duration > 0.0 {
-                    if self.playback.current_pts >= max_duration {
-                        self.do_seek(0.0, ctx);
-                    } else {
-                        self.playback.current_pts =
-                            self.playback.current_pts.clamp(0.0, max_duration);
-                    }
-                }
-            }
-            // Repintado: intervalo corto con audio activo (rodio) para evitar underruns.
-            if !is_first_frame {
-                let fps = self
-                    .decoder_a_meta()
-                    .or_else(|| self.decoder_b_meta())
-                    .map(|m| m.fps)
-                    .unwrap_or(25.0);
-                let max_delay_ms = if self.sink_a.is_some() || self.sink_b.is_some() {
-                    playback::REPINT_AUDIO_MAX_MS
-                } else {
-                    playback::REPINT_IDLE_MAX_MS
-                };
-                if fps > 0.0 {
-                    let delay = playback::next_frame_repaint_delay(
-                        fps,
-                        self.playback.current_pts,
-                        max_delay_ms,
-                    );
-                    ctx.request_repaint_after(delay);
-                } else {
-                    ctx.request_repaint();
-                }
-            }
-        }
+        // Master clock and repaint cadence.
+        self.update_master_clock_and_repaint(ctx, is_first_frame);
         // Keep UI updating while proxy generation is running
         if self.proxy_running() {
             ctx.request_repaint_after(Duration::from_millis(100));
@@ -793,68 +1134,8 @@ impl eframe::App for DiffPlayerApp {
             }
             self.sync_uniforms();
         }
-        // Drain Audio and update level meters (peak + decay)
-        const LEVEL_DECAY: f32 = 0.92;
-        if self.playback.is_playing {
-            let mut received_a = false;
-            let mut received_b = false;
-            if let Some(dec) = &mut self.decoder_a {
-                if let Some(sink) = &self.sink_a {
-                    while let Ok(audio) = dec.audio_rx.try_recv() {
-                        received_a = true;
-                        let peak = audio.samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
-                        self.view.audio_level_a = (self.view.audio_level_a * LEVEL_DECAY + peak)
-                            .max(peak)
-                            .min(1.0);
-                        let buf = rodio::buffer::SamplesBuffer::new(
-                            audio.channels,
-                            audio.sample_rate,
-                            audio.samples,
-                        );
-                        sink.append(buf);
-                    }
-                }
-            }
-            if !received_a {
-                self.view.audio_level_a *= LEVEL_DECAY;
-            }
-            if let Some(dec) = &mut self.decoder_b {
-                if let Some(sink) = &self.sink_b {
-                    while let Ok(audio) = dec.audio_rx.try_recv() {
-                        received_b = true;
-                        let peak = audio.samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
-                        self.view.audio_level_b = (self.view.audio_level_b * LEVEL_DECAY + peak)
-                            .max(peak)
-                            .min(1.0);
-                        let buf = rodio::buffer::SamplesBuffer::new(
-                            audio.channels,
-                            audio.sample_rate,
-                            audio.samples,
-                        );
-                        sink.append(buf);
-                    }
-                }
-            }
-            if !received_b {
-                self.view.audio_level_b *= LEVEL_DECAY;
-            }
-        }
-
-        // Update Volumes
-        if let Some(sink) = &self.sink_a {
-            if self.view.mute_a {
-                sink.set_volume(0.0);
-            } else {
-                sink.set_volume(self.view.vol_a);
-            }
-        }
-        if let Some(sink) = &self.sink_b {
-            if self.view.mute_b {
-                sink.set_volume(0.0);
-            } else {
-                sink.set_volume(self.view.vol_b);
-            }
-        }
+        self.drain_audio_and_update_levels();
+        self.apply_sink_volumes();
 
         // ── Handle screenshot events ────────────────────────────────────────
         let events = ctx.input(|i| i.raw.events.clone());
@@ -863,314 +1144,20 @@ impl eframe::App for DiffPlayerApp {
             // Processing other events...
         }
 
-        // ── Keyboard shortcuts ──────────────────────────────────────────────
-        ctx.input(|i| {
-            if i.key_pressed(egui::Key::Space) {
-                self.pending_play_pause_toggle = true;
-            }
-            if i.key_pressed(egui::Key::ArrowRight) {
-                self.pending_key_action = PendingKeyAction::StepFwd;
-            }
-            if i.key_pressed(egui::Key::ArrowLeft) {
-                self.pending_key_action = PendingKeyAction::StepBck;
-            }
-            if i.key_pressed(egui::Key::Home) {
-                self.pending_key_action = PendingKeyAction::Seek(0.0);
-            }
-            if i.key_pressed(egui::Key::Y) {
-                self.pending_key_action = PendingKeyAction::CycleMode;
-            }
-            if i.key_pressed(egui::Key::L) {
-                self.pending_key_action = PendingKeyAction::SideBySide;
-            }
-            if i.key_pressed(egui::Key::Num1) {
-                self.pending_key_action = PendingKeyAction::SplitPos0;
-            }
-            if i.key_pressed(egui::Key::Num2) {
-                self.pending_key_action = PendingKeyAction::SplitPos1;
-            }
-            if i.key_pressed(egui::Key::Num3) {
-                self.pending_key_action = PendingKeyAction::ToggleHud;
-            }
-            if i.key_pressed(egui::Key::Num4) {
-                self.pending_key_action = PendingKeyAction::Zoom(1.0);
-            }
-            if i.key_pressed(egui::Key::Num5) {
-                self.pending_key_action = PendingKeyAction::Zoom(0.5);
-            }
-            if i.key_pressed(egui::Key::Num6) {
-                self.pending_key_action = PendingKeyAction::Zoom(1.0);
-            }
-            if i.key_pressed(egui::Key::Num7) {
-                self.pending_key_action = PendingKeyAction::Zoom(2.0);
-            }
-            if i.key_pressed(egui::Key::Num8) {
-                self.pending_key_action = PendingKeyAction::Zoom(4.0);
-            }
-            if i.key_pressed(egui::Key::Num9) {
-                self.pending_key_action = PendingKeyAction::Zoom(8.0);
-            }
-            if i.key_pressed(egui::Key::F) {
-                log::info!("DEBUG: Key 'F' pressed. Triggering xcap OS-native capture.");
-                let dir_for_thread = self.view.screenshot_dir.clone();
-
-                std::thread::spawn(move || {
-                    let mut success = false;
-                    log::info!("DEBUG: xcap background thread scanning for OS Windows...");
-                    if let Ok(windows) = xcap::Window::all() {
-                        for window in windows {
-                            if let Ok(title) = window.title() {
-                                if title.contains("Production Media")
-                                    || title.contains("Diferencial")
-                                {
-                                    log::info!("DEBUG: Located OS Window -> {}", title);
-                                    if let Ok(img_buf) = window.capture_image() {
-                                        if let Some(dir) = dir_for_thread.as_ref() {
-                                            let timestamp =
-                                                chrono::Local::now().format("%Y%m%d_%H%M%S");
-                                            let filename = format!("WPP_QC_{timestamp}.png");
-                                            let path = dir.join(filename);
-                                            log::info!(
-                                                "DEBUG: Writing OS-extracted PNG to {:?}",
-                                                path
-                                            );
-
-                                            if let Err(e) = img_buf.save(&path) {
-                                                log::error!("DEBUG: Disk write error: {}", e);
-                                            } else {
-                                                log::info!("DEBUG: Screenshot successfully saved!");
-                                                success = true;
-                                            }
-                                        }
-                                    } else {
-                                        log::error!("DEBUG: xcap failed to read window buffer.");
-                                    }
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    if !success {
-                        log::error!("DEBUG: xcap failed to locate or read the target WPP window.");
-                    }
-                });
-            }
-            if i.key_pressed(egui::Key::R) {
-                self.pending_key_action = PendingKeyAction::ResetZoomPan;
-            }
-            if i.key_pressed(egui::Key::S) {
-                self.pending_key_action = PendingKeyAction::SwapVideos;
-            }
-
-            // ── Precise continuous frame stepping (Keyboard Repeat) ─────────
-            // Only set pending for repeat when (now - last_step_time) > repeat_delay (250ms), so we
-            // don't queue a second step on the very next frame after the first press (fixes "steps by two").
-            let now = i.time; // use i from this closure — do not call ctx.input() again (deadlock on macOS)
-            let repeat_delay = 0.25; // 250ms before first repeat
-            let repeat_interval = 0.05; // 50ms between subsequent repeats
-
-            if i.key_down(egui::Key::ArrowRight) {
-                if i.key_pressed(egui::Key::ArrowRight)
-                    || (now - self.last_step_time) > repeat_interval
-                {
-                    let delay_ok = (now - self.last_step_time) > repeat_delay;
-                    if i.key_pressed(egui::Key::ArrowRight) || delay_ok {
-                        self.pending_key_action = PendingKeyAction::StepFwd;
-                        self.last_step_time = now;
-                    }
-                }
-            } else if i.key_down(egui::Key::ArrowLeft) {
-                if i.key_pressed(egui::Key::ArrowLeft)
-                    || (now - self.last_step_time) > repeat_interval
-                {
-                    let delay_ok = (now - self.last_step_time) > repeat_delay;
-                    if i.key_pressed(egui::Key::ArrowLeft) || delay_ok {
-                        self.pending_key_action = PendingKeyAction::StepBck;
-                        self.last_step_time = now;
-                    }
-                }
-            } else {
-                self.last_step_time = 0.0;
-            }
-        });
+        self.handle_keyboard_input(ctx);
 
         // ── UI Overlay conditionally rendered ───────────────────────────────
         // Skip HUD on first frame (macOS Metal): minimal first frame so present can complete.
-        if self.view.show_hud && !is_first_frame {
-            // ── Menu bar (contains all controls inline) ─────────────────────────
-            egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
-                crate::ui::controls::show_menu_bar(ui, self);
-            });
-
-            // ── Info / metadata panel (left side); toggle in Vista menu
-            if self.view.show_left_panel {
-                egui::SidePanel::left("info_panel")
-                    .resizable(true)
-                    .default_width(260.0)
-                    .min_width(200.0)
-                    .max_width(340.0)
-                    .show(ctx, |ui| {
-                        crate::ui::info_panel::show(ui, self);
-                    });
-            }
-
-            // ── Audio + mode toolbar (right side); toggle in Vista menu
-            if self.view.show_right_panel {
-                egui::SidePanel::right("audio_panel")
-                    .resizable(true)
-                    .default_width(110.0)
-                    .min_width(90.0)
-                    .max_width(220.0)
-                    .show(ctx, |ui| {
-                        crate::ui::controls::show_audio_panel(ui, self);
-                    });
-            }
-
-            // ── Timeline (bottom) ───────────────────────────────────────────────
-            egui::TopBottomPanel::bottom("timeline").show(ctx, |ui| {
-                crate::ui::timeline::show(ui, self);
-            });
-        }
+        self.show_hud_panels(ctx, is_first_frame);
 
         // ── Central canvas ──────────────────────────────────────────────────
         egui::CentralPanel::default().show(ctx, |ui| {
             show_canvas(ui, self, frame);
         });
 
-        // ── Clean Feed Secondary Window (OBS Capture) ──────────────────────
-        if self.view.show_clean_feed_window {
-            let mut show = self.view.show_clean_feed_window;
-            let renderer_clone = Arc::clone(&self.renderer);
-
-            ctx.show_viewport_immediate(
-                egui::ViewportId::from_hash_of("clean_feed_viewport"),
-                egui::ViewportBuilder::default()
-                    .with_title("DiffPlayerQC - Clean Feed")
-                    .with_inner_size([1280.0, 720.0])
-                    .with_always_on_top(),
-                |ctx, _class| {
-                    if ctx.input(|i| i.viewport().close_requested()) {
-                        show = false;
-                    }
-
-                    egui::CentralPanel::default().show(ctx, |ui| {
-                        let available = ui.available_rect_before_wrap();
-                        ui.allocate_rect(available, egui::Sense::hover());
-                        ui.painter().add(egui_wgpu::Callback::new_paint_callback(
-                            available,
-                            RenderCallback {
-                                renderer: renderer_clone,
-                            },
-                        ));
-
-                        // Clean Feed Overlay
-                        let mode_str = match self.view.mode {
-                            CompareMode::SplitScreen => {
-                                if self.view.split_pos <= 0.01 {
-                                    "Solo B / B Only"
-                                } else if self.view.split_pos >= 0.99 {
-                                    "Solo A / A Only"
-                                } else {
-                                    "Separador / Split"
-                                }
-                            }
-                            CompareMode::AbsDiff => "Diferencia / Diff",
-                            CompareMode::Heatmap => "Mapa Calor / Heatmap",
-                            CompareMode::SideBySide => "Lado a Lado / Side-by-Side",
-                        };
-
-                        let video_str = match self.view.mode {
-                            CompareMode::SplitScreen => {
-                                if self.view.split_pos <= 0.01 {
-                                    "VIDEO A"
-                                } else if self.view.split_pos >= 0.99 {
-                                    "VIDEO B"
-                                } else {
-                                    "VIDEO A + B"
-                                }
-                            }
-                            _ => "VIDEO A + B",
-                        };
-
-                        let pts = self.playback.current_pts;
-                        // For a rough frame estimate we assume 24 fps, as we don't have global fps easily exposed without reaching decoder
-                        let rough_frame = (pts * 24.0).round() as u64;
-                        let overlay_text = format!(
-                            "{} | {} | PTS: {:.3}s | Frame ~= {}",
-                            video_str, mode_str, pts, rough_frame
-                        );
-
-                        // We draw a faint background to ensure readability on bright scenes
-                        let text_pos = available.min + egui::vec2(20.0, 20.0);
-                        let galley = ui.painter().layout_no_wrap(
-                            overlay_text,
-                            egui::FontId::proportional(22.0),
-                            egui::Color32::WHITE,
-                        );
-                        let bg_rect = galley.rect.translate(text_pos.to_vec2()).expand(6.0);
-                        ui.painter().rect_filled(
-                            bg_rect,
-                            4.0,
-                            egui::Color32::from_black_alpha(150),
-                        );
-                        ui.painter().galley(text_pos, galley, egui::Color32::WHITE);
-                    });
-                },
-            );
-
-            self.view.show_clean_feed_window = show;
-        }
-        // ── Proxy loading window ("Cargando imágenes") ─────────────────────
-        if self.proxy_running() {
-            let progress = self.proxy_progress();
-            egui::Window::new("Cargando imágenes")
-                .collapsible(false)
-                .resizable(false)
-                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-                .default_width(320.0)
-                .show(ctx, |ui| {
-                    ui.vertical_centered(|ui| {
-                        ui.add_space(12.0);
-                        ui.label("Cargando imágenes");
-                        ui.add_space(8.0);
-                        ui.add(egui::ProgressBar::new(progress.clamp(0.0, 1.0)).show_percentage());
-                        ui.add_space(12.0);
-                    });
-                });
-        }
-
-        // ── Error Alert Modal ───────────────────────────────────────────────
-        if let (Some(title), Some(msg)) = (&self.error_title, &self.error_message) {
-            let mut open = true;
-            egui::Window::new(
-                egui::RichText::new(title)
-                    .color(egui::Color32::from_rgb(255, 100, 100))
-                    .strong(),
-            )
-            .collapsible(false)
-            .resizable(false)
-            .pivot(egui::Align2::CENTER_CENTER)
-            .default_pos(ctx.screen_rect().center())
-            .fixed_size(egui::vec2(400.0, 150.0))
-            .show(ctx, |ui| {
-                ui.vertical_centered(|ui| {
-                    ui.add_space(15.0);
-                    ui.label(egui::RichText::new(msg).size(15.0));
-                    ui.add_space(25.0);
-                    if ui
-                        .button(egui::RichText::new("   OK   ").strong())
-                        .clicked()
-                    {
-                        open = false;
-                    }
-                    ui.add_space(10.0);
-                });
-            });
-            if !open {
-                self.error_title = None;
-                self.error_message = None;
-            }
-        }
+        self.show_clean_feed_viewport(ctx);
+        self.show_proxy_progress_window(ctx);
+        self.show_error_modal_if_any(ctx);
     }
 
     fn save(&mut self, _storage: &mut dyn eframe::Storage) {
