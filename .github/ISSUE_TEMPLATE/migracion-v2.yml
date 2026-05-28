@@ -1,0 +1,23 @@
+name: Migración v2 (tracking)
+description: Seguimiento de hitos M0–M7 según SPEC_V2 §15
+title: "Migración v2 (Tauri + Svelte)"
+labels: ["epic", "v2"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Especificación: `docs/SPEC_V2.md` — § 15 Hitos M0–M7.
+        Rama legacy v1: `egui-legacy`.
+  - type: checkboxes
+    id: hitos
+    attributes:
+      label: Hitos
+      options:
+        - label: M0 Bootstrap (`m0/bootstrap`)
+        - label: M1 Playback (`m1/playback`) — tras visto bueno M0
+        - label: M2 UI shell
+        - label: M3 Render wgpu
+        - label: M4 Audio
+        - label: M5 Inspect
+        - label: M6 Persistencia
+        - label: M7 Release
