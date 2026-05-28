@@ -1,13 +1,19 @@
-:root {
-  --bg-app: #0f1115;
-  --accent-primary: #2a8fe8;
-}
+@import "./lib/design/tokens.css";
 
 * {
   box-sizing: border-box;
 }
 
-body {
+html,
+body,
+#app {
   margin: 0;
+  height: 100%;
   background: var(--bg-app);
+  color: var(--text-primary);
+}
+
+code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
 }

@@ -85,7 +85,16 @@ Svelte 5 + TS + CSS vars  <--------------------------->  core/ decoder/ render/ 
 
 ### M2 — UI shell completa (2 sem)
 
-Menubar, toolbar, paneles, tabs, command palette, atajos.
+**Entregables:** menubar, toolbar, paneles colapsables, workspace tabs, command palette, atajos.
+
+**Aceptación:**
+
+- [ ] Layout Compare / Audio / Inspect alineado con mockups (desviación pixel ≤ 2 % en M2+).
+- [ ] Cambio de workspace &lt; 100 ms (sin animación de transform en tabs).
+- [ ] Command palette `Ctrl/Cmd+K` con navegación teclado.
+- [ ] Tests Playwright: cada workspace visible (`frontend/e2e/workspaces.spec.ts`).
+
+**Rama:** `m2/ui-shell`
 
 ### M3 — Render wgpu (1–2 sem)
 

@@ -1,0 +1,29 @@
+/* Tokens DiffPlayerQC v2 — § SPEC 5.1 */
+:root {
+  --bg-darkest: #0d0d0d;
+  --bg-app: #1a1a1a;
+  --bg-panel: #252525;
+  --bg-elev: #2e2e2e;
+  --bg-hover: #3a3a3a;
+  --border: #3f3f3f;
+
+  --accent-primary: #2a8fe8;
+  --accent-primary-hover: #4fa8f0;
+  --accent-resolve: #e05a1e;
+  --accent-ok: #3fbf6f;
+  --accent-err: #e14b4b;
+  --accent-warn: #e8c547;
+
+  --chan-a: #3fbf6f;
+  --chan-b: #2a8fe8;
+
+  --text-primary: #e8eaed;
+  --text-muted: #8b929a;
+  --font-ui: "Inter", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", ui-monospace, monospace;
+
+  --radius: 2px;
+  --radius-max: 4px;
+  --panel-transition: 180ms ease;
+  --letter-label: 0.05em;
+}

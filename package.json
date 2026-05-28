@@ -5,6 +5,7 @@
   "scripts": {
     "build": "pnpm --dir frontend build",
     "test": "pnpm --dir frontend test",
+    "test:e2e": "pnpm --dir frontend test:e2e",
     "dev:frontend": "pnpm --dir frontend dev",
     "tauri": "pnpm --dir src-tauri exec tauri",
     "tauri:dev": "cargo tauri dev",

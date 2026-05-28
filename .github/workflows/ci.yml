@@ -77,3 +77,7 @@ jobs:
       - run: pnpm install --dir frontend
       - run: pnpm build
       - run: pnpm test
+      - name: Install Playwright browsers
+        run: pnpm --dir frontend exec playwright install chromium
+      - name: E2E (M2 shell)
+        run: pnpm --dir frontend exec playwright test
