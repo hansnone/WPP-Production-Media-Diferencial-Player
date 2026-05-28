@@ -1,0 +1,18 @@
+[package]
+name = "diffplayerqc-tauri"
+version = "0.1.0"
+description = "Shell Tauri 2 DiffPlayerQC v2"
+edition = "2021"
+
+[lib]
+name = "diffplayerqc_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+diffplayerqc-core = { path = "../crates/core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = [] }

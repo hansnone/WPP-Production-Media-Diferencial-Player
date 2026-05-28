@@ -1,5 +1,9 @@
 /target
 /dist
+frontend/dist
+frontend/node_modules
+node_modules
+.tmp_binder_pages
 .DS_Store
 .aider*
 *_Diff_start.log

@@ -1077,12 +1077,11 @@ impl eframe::App for DiffPlayerApp {
             PendingKeyAction::StepBck => self.do_step_bck_inner(ctx),
             PendingKeyAction::Seek(t) => self.do_seek_inner(t, ctx),
             PendingKeyAction::CycleMode => {
-                self.view.mode = match self.view.mode {
-                    CompareMode::SplitScreen => CompareMode::AbsDiff,
-                    CompareMode::AbsDiff => CompareMode::Heatmap,
-                    CompareMode::Heatmap => CompareMode::SideBySide,
-                    CompareMode::SideBySide => CompareMode::SplitScreen,
-                };
+                self.view.mode = diffplayerqc_core::ciclar_modo_comparacion(self.view.mode);
+                self.view.diff_mode = diffplayerqc_core::normalizar_modo_diferencia(
+                    self.view.mode,
+                    self.view.diff_mode,
+                );
                 ctx.request_repaint();
             }
             PendingKeyAction::SideBySide => {

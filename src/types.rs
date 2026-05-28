@@ -1,6 +1,8 @@
-//! Tipos compartidos entre UI, decoders y renderer: frames, comandos y estado de reproducción.
+//! Tipos compartidos entre UI, decoders y renderer: frames, comandos y re-exports de `core`.
 
 use serde::{Deserialize, Serialize};
+
+pub use diffplayerqc_core::{CompareMode, DiffMode, PlaybackState};
 
 /// A decoded video frame ready for GPU upload.
 #[derive(Clone)]
@@ -65,22 +67,6 @@ pub struct ColorMetadata {
     pub audio_stream_metadata: String,
 }
 
-/// Current display mode for the comparison shader.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[repr(u32)]
-pub enum CompareMode {
-    SplitScreen = 0,
-    AbsDiff = 1,
-    Heatmap = 2,
-    SideBySide = 3,
-}
-
-impl Default for CompareMode {
-    fn default() -> Self {
-        Self::SplitScreen
-    }
-}
-
 /// Safe zone overlay mode: none, TV (EBU R95), or social/mobile (9:16).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum SafeZoneMode {
@@ -90,23 +76,6 @@ pub enum SafeZoneMode {
     TvEbu,
     /// Social 9:16 — Safe zone + danger zones (top 15%, bottom 22%, right 15%, left 5%) shaded.
     Social,
-}
-
-/// The specific algorithm used when evaluating `CompareMode::AbsDiff`
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[repr(u32)]
-pub enum DiffMode {
-    LegacyAbs = 0,
-    AbsLinear = 1,
-    AbsSqrt = 2,
-    SignedDiverging = 3,
-    None = 4,
-}
-
-impl Default for DiffMode {
-    fn default() -> Self {
-        Self::AbsLinear
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -157,38 +126,9 @@ impl Default for Theme {
     }
 }
 
-/// Estado de reproducción compartido entre la UI y la coordinación con los decoders.
-///
-/// Reloj maestro: al reproducir, `current_pts = playback_start_pts + elapsed` desde `playback_start_instant`.
-#[derive(Debug, Clone, Default)]
-pub struct PlaybackState {
-    pub is_playing: bool,
-    pub current_pts: f64,
-    pub duration_a: f64,
-    pub duration_b: f64,
-    /// When set, current_pts is derived from this instant + playback_start_pts (system-time master clock).
-    pub playback_start_instant: Option<std::time::Instant>,
-    /// PTS at the moment we started (or seeked during) playback.
-    pub playback_start_pts: f64,
-}
-
 /// Which video channel (A or B).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Channel {
     A,
     B,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Los discriminantes deben coincidir con `compare.wgsl` / uniforms.
-    #[test]
-    fn compare_mode_shader_indices() {
-        assert_eq!(CompareMode::SplitScreen as u32, 0);
-        assert_eq!(CompareMode::AbsDiff as u32, 1);
-        assert_eq!(CompareMode::Heatmap as u32, 2);
-        assert_eq!(CompareMode::SideBySide as u32, 3);
-    }
 }
