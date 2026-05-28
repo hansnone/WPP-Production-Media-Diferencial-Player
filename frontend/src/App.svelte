@@ -75,7 +75,7 @@
 
   {#if !enTauri}
     <p class="aviso">
-      Ejecuta con <code>cargo tauri dev --manifest-path src-tauri/Cargo.toml</code> para
+      Ejecuta desde la raíz del repo con <code>cargo tauri dev</code> o <code>pnpm tauri:dev</code> para
       abrir vídeos y escuchar ticks.
     </p>
   {/if}

@@ -2,6 +2,18 @@
 
 Comunicación entre el frontend Svelte y el backend Rust (`src-tauri`).
 
+## Desarrollo local
+
+Desde la **raíz del repositorio** (donde está `src-tauri/`):
+
+```bash
+pnpm install --dir frontend
+cargo tauri dev
+# equivalente: pnpm tauri:dev
+```
+
+`cargo tauri` no admite `--manifest-path`; detecta `src-tauri/tauri.conf.json` automáticamente.
+
 ## Comandos (`invoke`)
 
 | Comando | Parámetros | Retorno | Descripción |
