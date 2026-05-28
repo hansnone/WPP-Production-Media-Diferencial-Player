@@ -4,6 +4,10 @@ frontend/dist
 frontend/node_modules
 node_modules
 .tmp_binder_pages
+tests/fixtures/*.mp4
+tests/fixtures/*.mov
+tests/fixtures/*.mkv
+tests/fixtures/*.mxf
 .DS_Store
 .aider*
 *_Diff_start.log

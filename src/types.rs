@@ -27,7 +27,7 @@ pub struct AudioFrame {
 }
 
 /// Commands sent from the UI thread to a decoder thread.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum DecoderCommand {
     /// Start continuous playback from the current position.
     Play,

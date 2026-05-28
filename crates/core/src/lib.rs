@@ -12,7 +12,7 @@ pub mod workspace;
 pub use jugador::PlayerState;
 pub use marcador::{ListaMarcadores, Marcador};
 pub use modos::{
-    ciclar_modo_comparacion, normalizar_modo_diferencia, modos_diferencia_validos, CompareMode,
+    ciclar_modo_comparacion, modos_diferencia_validos, normalizar_modo_diferencia, CompareMode,
     DiffMode,
 };
 pub use persistencia_layout::{DisposicionPaneles, LayoutPersistido};

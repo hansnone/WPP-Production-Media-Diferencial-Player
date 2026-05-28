@@ -73,7 +73,15 @@ Svelte 5 + TS + CSS vars  <--------------------------->  core/ decoder/ render/ 
 
 ### M1 — Apertura y reproducción (1–2 sem)
 
-Abrir A/B, reproducir, seek, step; canvas placeholder negro. *(No iniciar sin visto bueno post-M0.)*
+**Entregables:** abrir A y B, reproducir, seek, step; canvas placeholder negro (`#canvas-slot`).
+
+**Aceptación:**
+
+- [ ] Cargar 4 archivos de test (mp4, mov ProRes, mkv h264, mxf) sin error.
+- [ ] Eventos `playback-tick` ~60 Hz en reproducción (ver `docs/IPC_PROTOCOL.md`).
+- [ ] Audio (rodio) sin underruns perceptibles 60 s seguidos.
+
+**Rama:** `m1/playback`
 
 ### M2 — UI shell completa (2 sem)
 

@@ -657,7 +657,10 @@ impl DiffPlayerApp {
     }
 
     fn complete_proxy_if_ready(&mut self, ctx: &egui::Context) {
-        if self.proxy_running() || self.proxy_target_channel.is_none() || self.proxy_temp_dir.is_none() {
+        if self.proxy_running()
+            || self.proxy_target_channel.is_none()
+            || self.proxy_temp_dir.is_none()
+        {
             return;
         }
         let dir = self.proxy_temp_dir.take().unwrap();
@@ -699,8 +702,11 @@ impl DiffPlayerApp {
                 playback::REPINT_IDLE_MAX_MS
             };
             if fps > 0.0 {
-                let delay =
-                    playback::next_frame_repaint_delay(fps, self.playback.current_pts, max_delay_ms);
+                let delay = playback::next_frame_repaint_delay(
+                    fps,
+                    self.playback.current_pts,
+                    max_delay_ms,
+                );
                 ctx.request_repaint_after(delay);
             } else {
                 ctx.request_repaint();
@@ -720,8 +726,9 @@ impl DiffPlayerApp {
                 while let Ok(audio) = dec.audio_rx.try_recv() {
                     received_a = true;
                     let peak = audio.samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
-                    self.view.audio_level_a =
-                        (self.view.audio_level_a * LEVEL_DECAY + peak).max(peak).min(1.0);
+                    self.view.audio_level_a = (self.view.audio_level_a * LEVEL_DECAY + peak)
+                        .max(peak)
+                        .min(1.0);
                     let buf = rodio::buffer::SamplesBuffer::new(
                         audio.channels,
                         audio.sample_rate,
@@ -739,8 +746,9 @@ impl DiffPlayerApp {
                 while let Ok(audio) = dec.audio_rx.try_recv() {
                     received_b = true;
                     let peak = audio.samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
-                    self.view.audio_level_b =
-                        (self.view.audio_level_b * LEVEL_DECAY + peak).max(peak).min(1.0);
+                    self.view.audio_level_b = (self.view.audio_level_b * LEVEL_DECAY + peak)
+                        .max(peak)
+                        .min(1.0);
                     let buf = rodio::buffer::SamplesBuffer::new(
                         audio.channels,
                         audio.sample_rate,
@@ -829,11 +837,14 @@ impl DiffPlayerApp {
                     if let Ok(windows) = xcap::Window::all() {
                         for window in windows {
                             if let Ok(title) = window.title() {
-                                if title.contains("Production Media") || title.contains("Diferencial") {
+                                if title.contains("Production Media")
+                                    || title.contains("Diferencial")
+                                {
                                     log::trace!("xcap: window -> {}", title);
                                     if let Ok(img_buf) = window.capture_image() {
                                         if let Some(dir) = dir_for_thread.as_ref() {
-                                            let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
+                                            let timestamp =
+                                                chrono::Local::now().format("%Y%m%d_%H%M%S");
                                             let filename = format!("WPP_QC_{timestamp}.png");
                                             let path = dir.join(filename);
                                             log::trace!("xcap: writing PNG to {:?}", path);
@@ -976,11 +987,8 @@ impl DiffPlayerApp {
                         egui::Color32::WHITE,
                     );
                     let bg_rect = galley.rect.translate(text_pos.to_vec2()).expand(6.0);
-                    ui.painter().rect_filled(
-                        bg_rect,
-                        4.0,
-                        egui::Color32::from_black_alpha(150),
-                    );
+                    ui.painter()
+                        .rect_filled(bg_rect, 4.0, egui::Color32::from_black_alpha(150));
                     ui.painter().galley(text_pos, galley, egui::Color32::WHITE);
                 });
             },
@@ -1034,7 +1042,10 @@ impl DiffPlayerApp {
                 ui.label(egui::RichText::new(&msg).size(15.0));
                 ui.add_space(25.0);
                 let ok = crate::ui::design::dialog_ok(lang);
-                if ui.button(egui::RichText::new(format!("   {ok}   ")).strong()).clicked() {
+                if ui
+                    .button(egui::RichText::new(format!("   {ok}   ")).strong())
+                    .clicked()
+                {
                     open = false;
                 }
                 ui.add_space(10.0);

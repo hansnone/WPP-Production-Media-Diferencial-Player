@@ -297,11 +297,7 @@ fn channel_section(
                     tr(lang, "Fmt Píxel", "Pixel Fmt", "Píxel"),
                     &m.pixel_format,
                 );
-                kv(
-                    ui,
-                    tr(lang, "Espacio", "Colorspace", "Cala"),
-                    &m.colorspace,
-                );
+                kv(ui, tr(lang, "Espacio", "Colorspace", "Cala"), &m.colorspace);
                 kv(
                     ui,
                     tr(lang, "Transfer", "Transfer", "Tíra"),
@@ -332,12 +328,7 @@ fn channel_section(
                 );
                 kv(
                     ui,
-                    tr(
-                        lang,
-                        "Marca contenedor",
-                        "Major brand",
-                        "Marca",
-                    ),
+                    tr(lang, "Marca contenedor", "Major brand", "Marca"),
                     if m.major_brand.is_empty() || m.major_brand == "—" {
                         "—"
                     } else {

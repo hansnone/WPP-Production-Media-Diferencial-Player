@@ -10,6 +10,10 @@ description = "Frame-accurate differential video QC player"
 authors = ["DiffPlayerQC"]
 license = "MIT"
 
+[lib]
+name = "diffplayerqc"
+path = "src/lib.rs"
+
 [[bin]]
 name = "diffplayerqc"
 path = "src/main.rs"

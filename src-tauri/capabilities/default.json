@@ -1,7 +1,10 @@
 {
   "$schema": "https://schema.tauri.app/config/2/capability",
   "identifier": "default",
-  "description": "Capacidades por defecto M0",
+  "description": "Capacidades por defecto v2",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": [
+    "core:default",
+    "dialog:default"
+  ]
 }

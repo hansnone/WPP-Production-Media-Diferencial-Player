@@ -6,20 +6,10 @@ use crate::ui::design::tr;
 /// Etiqueta corta para modos de diferencia en combos y barras laterales.
 pub fn diff_mode_label(lang: Language, mode: DiffMode) -> &'static str {
     match mode {
-        DiffMode::LegacyAbs => tr(
-            lang,
-            "Legado (abs)",
-            "Legacy (abs)",
-            "Yestë (abs)",
-        ),
+        DiffMode::LegacyAbs => tr(lang, "Legado (abs)", "Legacy (abs)", "Yestë (abs)"),
         DiffMode::AbsLinear => tr(lang, "Lineal", "Linear", "Lina"),
         DiffMode::AbsSqrt => tr(lang, "Raíz", "Sqrt", "Súrt"),
-        DiffMode::SignedDiverging => tr(
-            lang,
-            "Divergente signado",
-            "Signed diverging",
-            "Haina",
-        ),
+        DiffMode::SignedDiverging => tr(lang, "Divergente signado", "Signed diverging", "Haina"),
         DiffMode::None => tr(lang, "—", "—", "—"),
     }
 }
@@ -107,10 +97,7 @@ mod tests {
         let mut seen = [false; 25];
         for (i, (t, _)) in THEME_MENU_CHOICES.iter().enumerate() {
             let idx = *t as usize;
-            assert!(
-                idx < 25,
-                "índice Theme fuera de rango: {t:?} -> {idx}"
-            );
+            assert!(idx < 25, "índice Theme fuera de rango: {t:?} -> {idx}");
             assert!(
                 !seen[idx],
                 "variante Theme duplicada en THEME_MENU_CHOICES: {t:?} (pos {i})"

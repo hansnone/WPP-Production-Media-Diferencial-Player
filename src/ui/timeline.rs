@@ -64,11 +64,7 @@ pub fn show(ui: &mut Ui, app: &mut DiffPlayerApp) {
         handle_radius + 1.5,
         ui.visuals().window_fill(),
     );
-    painter.circle_filled(
-        handle_center,
-        handle_radius,
-        ACCENT_PRIMARY,
-    );
+    painter.circle_filled(handle_center, handle_radius, ACCENT_PRIMARY);
 
     // ── Timecode labels ───────────────────────────────────────────────────
     let current_label = format_timecode(current_pts);

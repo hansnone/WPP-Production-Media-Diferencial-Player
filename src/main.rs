@@ -3,12 +3,12 @@
 //! Los módulos de la app viven en `app/`, `decoder`, `renderer`, etc. No contiene lógica de QC;
 //! solo configura el entorno nativo antes de delegar en [`DiffPlayerApp`](crate::app::DiffPlayerApp).
 
+// Re-exporta la librería en la raíz del binario para que `crate::types` siga funcionando en v1.
+pub use diffplayerqc::{decoder, trace_log, types};
+
 mod app;
-mod decoder;
 mod proxy;
 mod renderer;
-mod trace_log;
-mod types;
 mod ui;
 
 use eframe::{egui, App, CreationContext};

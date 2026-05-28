@@ -67,7 +67,11 @@ mod tests {
         );
         let json = serde_json::to_string(&lp).unwrap();
         let loaded: LayoutPersistido = serde_json::from_str(&json).unwrap();
-        assert!(!loaded.obtener(WorkspaceLayout::Compare).panel_izquierdo_visible);
+        assert!(
+            !loaded
+                .obtener(WorkspaceLayout::Compare)
+                .panel_izquierdo_visible
+        );
         assert_eq!(loaded.ultimo_workspace, WorkspaceLayout::Compare);
     }
 }
