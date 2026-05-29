@@ -28,8 +28,12 @@ class PlayerStore {
   }
 
   async abrir(canal: "a" | "b") {
-    const s = await abrirDialogo(canal);
-    if (s) this.snap = s;
+    try {
+      const s = await abrirDialogo(canal);
+      if (s) this.snap = s;
+    } catch (err) {
+      console.error("Error al abrir vídeo:", err);
+    }
   }
 
   async playPausa() {

@@ -19,8 +19,9 @@ cargo tauri dev
 | Comando | Parámetros | Retorno | Descripción |
 |---------|------------|---------|-------------|
 | `obtener_estado` | — | `SnapshotReproduccion` | Estado actual sin mutar |
-| `abrir_video` | `canal`: `"a"` \| `"b"`, `ruta`: string | `SnapshotReproduccion` | Abre archivo por ruta absoluta |
-| `abrir_dialogo` | `canal`: `"a"` \| `"b"` | `SnapshotReproduccion` \| null | Diálogo nativo; null si cancela |
+| `abrir_video` | `canal`: `"a"` \| `"b"`, `ruta`: string | `SnapshotReproduccion` | Abre archivo por ruta absoluta (tras `open()` del plugin dialog) |
+| `abrir_dialogo` | `canal`: `"a"` \| `"b"` | `SnapshotReproduccion` \| null | Respaldo Rust; el UI usa `open()` + `abrir_video` |
+| `ocultar_viewport` | — | — | Oculta overlay (p. ej. antes del diálogo en macOS) |
 | `alternar_play` | — | `SnapshotReproduccion` | Play ↔ Pausa |
 | `seek` | `pts`: number (segundos) | `SnapshotReproduccion` | Salto absoluto |
 | `step_adelante` | — | `SnapshotReproduccion` | Un fotograma adelante |

@@ -37,19 +37,36 @@ fn abrir_video(
     })
 }
 
+/// Respaldo si algo invoca `abrir_dialogo` por IPC (el flujo habitual usa `open` en el frontend).
 #[tauri::command]
-async fn abrir_dialogo(
+fn abrir_dialogo(
     app: tauri::AppHandle,
     estado: tauri::State<'_, EstadoApp>,
     canal: CanalUi,
 ) -> Result<Option<SnapshotReproduccion>, String> {
     use tauri_plugin_dialog::DialogExt;
 
-    let ruta = app
-        .dialog()
-        .file()
-        .add_filter("Vídeo", &["mp4", "mov", "mkv", "mxf", "avi", "webm"])
-        .blocking_pick_file();
+    let _ = viewport::ocultar_overlay(&app);
+    if let Some(main) = app.get_webview_window("main") {
+        let _ = main.set_focus();
+    }
+
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    let app_dialogo = app.clone();
+    app.run_on_main_thread(move || {
+        app_dialogo
+            .dialog()
+            .file()
+            .add_filter("Vídeo", &["mp4", "mov", "mkv", "mxf", "avi", "webm"])
+            .pick_file(move |path| {
+                let _ = tx.send(path);
+            });
+    })
+    .map_err(|e| e.to_string())?;
+
+    let ruta = rx
+        .recv()
+        .map_err(|_| "no se pudo completar el diálogo de archivos".to_string())?;
 
     let Some(path) = ruta else {
         return Ok(None);

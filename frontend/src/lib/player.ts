@@ -1,4 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { open } from "@tauri-apps/plugin-dialog";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 /** Estado de reproducción emitido en `playback-tick` (alineado con Rust). */
@@ -16,12 +18,41 @@ export interface SnapshotReproduccion {
 
 export type Canal = "a" | "b";
 
+const FILTROS_VIDEO = [
+  {
+    name: "Vídeo",
+    extensions: ["mp4", "mov", "mkv", "mxf", "avi", "webm"],
+  },
+];
+
 export async function obtenerEstado(): Promise<SnapshotReproduccion> {
   return invoke("obtener_estado");
 }
 
+/**
+ * Abre el diálogo nativo de archivos y carga el vídeo en el canal indicado.
+ * El plugin `dialog` en el frontend evita bloqueos del hilo principal en macOS.
+ */
 export async function abrirDialogo(canal: Canal): Promise<SnapshotReproduccion | null> {
-  return invoke("abrir_dialogo", { canal });
+  if (!("__TAURI_INTERNALS__" in window)) {
+    return null;
+  }
+
+  // La overlay wgpu puede quedarse encima y robar el foco del NSOpenPanel en macOS.
+  await invoke("ocultar_viewport").catch(() => undefined);
+  await getCurrentWindow().setFocus().catch(() => undefined);
+
+  const ruta = await open({
+    multiple: false,
+    title: canal === "a" ? "Abrir vídeo A" : "Abrir vídeo B",
+    filters: FILTROS_VIDEO,
+  });
+
+  if (!ruta || Array.isArray(ruta)) {
+    return null;
+  }
+
+  return invoke("abrir_video", { canal, ruta });
 }
 
 export async function abrirVideo(canal: Canal, ruta: string): Promise<SnapshotReproduccion> {
