@@ -52,11 +52,19 @@ export async function abrirDialogo(canal: Canal): Promise<SnapshotReproduccion |
     return null;
   }
 
-  return invoke("abrir_video", { canal, ruta });
+  const snap = await invoke<SnapshotReproduccion>("abrir_video", { canal, ruta });
+  avisarResyncViewport();
+  return snap;
 }
 
 export async function abrirVideo(canal: Canal, ruta: string): Promise<SnapshotReproduccion> {
-  return invoke("abrir_video", { canal, ruta });
+  const snap = await invoke<SnapshotReproduccion>("abrir_video", { canal, ruta });
+  avisarResyncViewport();
+  return snap;
+}
+
+function avisarResyncViewport() {
+  window.dispatchEvent(new CustomEvent("diffplayerqc-sync-viewport"));
 }
 
 export async function alternarPlay(): Promise<SnapshotReproduccion> {

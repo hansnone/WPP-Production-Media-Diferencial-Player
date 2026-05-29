@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { ocultarViewport, sincronizarViewport } from "../../viewport";
+  import { ocultarViewport, rectDesdeElemento, sincronizarViewport } from "../../viewport";
 
   interface Props {
     activo?: boolean;
@@ -9,40 +9,47 @@
 
   let { activo = true, children }: Props = $props();
   let contenedor: HTMLDivElement | undefined = $state();
+  let rafId = 0;
 
-  function publicarRecto() {
+  async function publicarRecto() {
     if (!activo) {
       if ("__TAURI_INTERNALS__" in window) void ocultarViewport();
       return;
     }
     if (!contenedor || !("__TAURI_INTERNALS__" in window)) return;
-    const objetivo =
+
+    const slot =
       (contenedor.querySelector("#canvas-slot") as HTMLElement | null) ?? contenedor;
-    const r = objetivo.getBoundingClientRect();
-    void sincronizarViewport({
-      x: r.left,
-      y: r.top,
-      width: r.width,
-      height: r.height,
+    await sincronizarViewport(rectDesdeElemento(slot));
+  }
+
+  /** Evita decenas de IPC por segundo; alinea en el siguiente frame. */
+  function programarSync() {
+    cancelAnimationFrame(rafId);
+    rafId = requestAnimationFrame(() => {
+      void publicarRecto();
     });
   }
 
   onMount(() => {
-    publicarRecto();
-    const obs = new ResizeObserver(() => publicarRecto());
+    programarSync();
+    const obs = new ResizeObserver(() => programarSync());
     if (contenedor) obs.observe(contenedor);
-    window.addEventListener("resize", publicarRecto);
-    const id = setInterval(publicarRecto, 500);
+    window.addEventListener("resize", programarSync);
+    const alCargarVideo = () => programarSync();
+    window.addEventListener("diffplayerqc-sync-viewport", alCargarVideo);
     return () => {
+      cancelAnimationFrame(rafId);
       obs.disconnect();
-      window.removeEventListener("resize", publicarRecto);
-      clearInterval(id);
+      window.removeEventListener("resize", programarSync);
+      window.removeEventListener("diffplayerqc-sync-viewport", alCargarVideo);
       if ("__TAURI_INTERNALS__" in window) void ocultarViewport();
     };
   });
 
   $effect(() => {
-    if (activo) publicarRecto();
+    if (activo) programarSync();
+    else if ("__TAURI_INTERNALS__" in window) void ocultarViewport();
   });
 </script>
 
@@ -58,5 +65,7 @@
     width: 100%;
     height: 100%;
     min-height: 200px;
+    /* No capturar clics: la overlay nativa va encima solo del slot. */
+    pointer-events: none;
   }
 </style>

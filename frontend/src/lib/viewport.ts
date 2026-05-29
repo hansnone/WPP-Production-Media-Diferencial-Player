@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { CompareMode, DiffMode } from "./compare";
 
+/** Rectángulo del DOM (`getBoundingClientRect`), en píxeles lógicos del webview. */
 export interface RectViewport {
   x: number;
   y: number;
@@ -17,6 +18,11 @@ export interface VistaCompare {
   pan_u: number;
   pan_v: number;
   split_horizontal: boolean;
+}
+
+export function rectDesdeElemento(elemento: HTMLElement): RectViewport {
+  const r = elemento.getBoundingClientRect();
+  return { x: r.left, y: r.top, width: r.width, height: r.height };
 }
 
 export async function sincronizarViewport(rect: RectViewport): Promise<void> {

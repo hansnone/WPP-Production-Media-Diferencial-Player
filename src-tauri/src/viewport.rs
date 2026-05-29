@@ -1,6 +1,6 @@
 //! Ventana overlay wgpu alineada con `#canvas-slot` del WebView.
 //!
-//! Usamos [`Window`] sin webview: el WKWebView tapaba la superficie wgpu (cuadro negro).
+//! Ventana nativa sin webview; posición en píxeles físicos respecto al cliente de `main`.
 
 use std::sync::{Arc, Mutex};
 
@@ -8,13 +8,13 @@ use diffplayerqc_render::{calcular_escala_letterbox, ShaderUniforms, ViewportGpu
 use diffplayerqc_core::CompareMode;
 use serde::Deserialize;
 use tauri::{
-    utils::config::Color, AppHandle, LogicalPosition, LogicalSize, Manager, Position, Size,
+    utils::config::Color, AppHandle, Manager, PhysicalPosition, PhysicalSize, Position, Size,
     window::{Window, WindowBuilder},
 };
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct RectViewport {
-    /// Posición X en coords lógicas del webview (`getBoundingClientRect`).
+    /// `getBoundingClientRect` del canvas (lógico, origen arriba-izquierda del webview).
     pub x: f64,
     pub y: f64,
     pub width: f64,
@@ -65,7 +65,6 @@ impl EstadoViewport {
         }
     }
 
-    /// Ventana nativa hija de `main` (solo superficie wgpu, sin HTML).
     fn asegurar_overlay(app: &AppHandle) -> tauri::Result<Window> {
         if let Some(w) = app.get_window("viewport") {
             return Ok(w);
@@ -85,10 +84,20 @@ impl EstadoViewport {
             .parent(&parent)?
             .build()?;
 
-        // Clics pasan al webview (toolbar, timeline, etc.) salvo sobre el canvas.
-        let _ = overlay.set_ignore_cursor_events(true);
-
         Ok(overlay)
+    }
+
+    /// DOM lógico → píxeles físicos relativos al área cliente de `main` (ventana hija).
+    fn rect_fisico_cliente(app: &AppHandle, rect: &RectViewport) -> tauri::Result<(i32, i32, u32, u32, f64)> {
+        let main = app
+            .get_webview_window("main")
+            .ok_or_else(|| tauri::Error::Anyhow(anyhow::anyhow!("ventana main no encontrada")))?;
+        let escala = main.scale_factor().unwrap_or(1.0);
+        let rel_x = (rect.x * escala).round() as i32;
+        let rel_y = (rect.y * escala).round() as i32;
+        let w_fis = (rect.width * escala).round().max(1.0) as u32;
+        let h_fis = (rect.height * escala).round().max(1.0) as u32;
+        Ok((rel_x, rel_y, w_fis, h_fis, escala))
     }
 
     pub fn sincronizar_recto(
@@ -98,34 +107,24 @@ impl EstadoViewport {
     ) -> tauri::Result<()> {
         let overlay = Self::asegurar_overlay(app)?;
 
-        let w_log = rect.width.max(1.0);
-        let h_log = rect.height.max(1.0);
-
-        if w_log < 8.0 || h_log < 8.0 {
+        if rect.width < 8.0 || rect.height < 8.0 {
             let _ = overlay.hide();
             return Ok(());
         }
 
-        self.ancho_logico = w_log as u32;
-        self.alto_logico = h_log as u32;
+        let (rel_x, rel_y, w_fis, h_fis, escala) = Self::rect_fisico_cliente(app, &rect)?;
+        self.ancho_logico = (w_fis as f64 / escala).round().max(1.0) as u32;
+        self.alto_logico = (h_fis as f64 / escala).round().max(1.0) as u32;
 
-        // Hijo de `main`: coords lógicas relativas al área cliente (como getBoundingClientRect).
-        overlay.set_position(Position::Logical(LogicalPosition::new(rect.x, rect.y)))?;
-        overlay.set_size(Size::Logical(LogicalSize::new(w_log, h_log)))?;
-
-        let scale = app
-            .get_webview_window("main")
-            .map(|w| w.scale_factor().unwrap_or(1.0))
-            .unwrap_or(1.0);
-        let w_fis = (w_log * scale).round() as u32;
-        let h_fis = (h_log * scale).round() as u32;
+        overlay.set_position(Position::Physical(PhysicalPosition::new(rel_x, rel_y)))?;
+        overlay.set_size(Size::Physical(PhysicalSize::new(w_fis, h_fis)))?;
 
         if self.gpu.is_none() {
-            let gpu = ViewportGpu::nuevo(overlay.clone(), w_fis.max(1), h_fis.max(1))
+            let gpu = ViewportGpu::nuevo(overlay.clone(), w_fis, h_fis)
                 .map_err(|e| tauri::Error::Anyhow(e.into()))?;
             self.gpu = Some(gpu);
         } else if let Some(gpu) = &mut self.gpu {
-            gpu.redimensionar(w_fis.max(1), h_fis.max(1));
+            gpu.redimensionar(w_fis, h_fis);
         }
 
         overlay.show()?;
@@ -189,7 +188,6 @@ impl EstadoViewport {
 
 pub type ViewportCompartido = Arc<Mutex<EstadoViewport>>;
 
-/// Oculta la overlay al salir del workspace Compare.
 pub fn ocultar_overlay(app: &AppHandle) -> tauri::Result<()> {
     if let Some(w) = app.get_window("viewport") {
         w.hide()?;
