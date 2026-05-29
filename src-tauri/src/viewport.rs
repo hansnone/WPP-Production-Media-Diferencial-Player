@@ -1,4 +1,6 @@
 //! Ventana overlay wgpu alineada con `#canvas-slot` del WebView.
+//!
+//! Usamos [`Window`] sin webview: el WKWebView tapaba la superficie wgpu (cuadro negro).
 
 use std::sync::{Arc, Mutex};
 
@@ -6,13 +8,13 @@ use diffplayerqc_render::{calcular_escala_letterbox, ShaderUniforms, ViewportGpu
 use diffplayerqc_core::CompareMode;
 use serde::Deserialize;
 use tauri::{
-    utils::config::Color, AppHandle, Manager, PhysicalPosition, PhysicalSize, Url, WebviewUrl,
-    WebviewWindowBuilder,
+    utils::config::Color, AppHandle, LogicalPosition, LogicalSize, Manager, Position, Size,
+    window::{Window, WindowBuilder},
 };
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct RectViewport {
-    /// Posición X lógica relativa al contenido del webview.
+    /// Posición X en coords lógicas del webview (`getBoundingClientRect`).
     pub x: f64,
     pub y: f64,
     pub width: f64,
@@ -63,34 +65,29 @@ impl EstadoViewport {
         }
     }
 
-    /// HTML mínimo negro (evita el flash blanco de `about:blank` en dev y release).
-    fn url_overlay() -> WebviewUrl {
-        #[cfg(debug_assertions)]
-        if let Ok(url) = Url::parse("http://localhost:5173/viewport.html") {
-            return WebviewUrl::External(url);
-        }
-        WebviewUrl::App("viewport.html".into())
-    }
-
-    fn asegurar_overlay(app: &AppHandle) -> tauri::Result<tauri::WebviewWindow> {
-        if let Some(w) = app.get_webview_window("viewport") {
+    /// Ventana nativa hija de `main` (solo superficie wgpu, sin HTML).
+    fn asegurar_overlay(app: &AppHandle) -> tauri::Result<Window> {
+        if let Some(w) = app.get_window("viewport") {
             return Ok(w);
         }
-        let main = app.get_webview_window("main").ok_or_else(|| {
+
+        let parent = app.get_window("main").ok_or_else(|| {
             tauri::Error::Anyhow(anyhow::anyhow!("ventana principal no encontrada"))
         })?;
 
-        let mut builder = WebviewWindowBuilder::new(app, "viewport", Self::url_overlay())
+        let overlay = WindowBuilder::new(app, "viewport")
             .title("")
             .decorations(false)
-            .always_on_top(true)
+            .transparent(true)
             .skip_taskbar(true)
             .visible(false)
-            .background_color(Color(0, 0, 0, 255))
-            .transparent(true)
-            .parent(&main)?;
+            .background_color(Color(0, 0, 0, 0))
+            .parent(&parent)?
+            .build()?;
 
-        let overlay = builder.build()?;
+        // Clics pasan al webview (toolbar, timeline, etc.) salvo sobre el canvas.
+        let _ = overlay.set_ignore_cursor_events(true);
+
         Ok(overlay)
     }
 
@@ -100,17 +97,10 @@ impl EstadoViewport {
         rect: RectViewport,
     ) -> tauri::Result<()> {
         let overlay = Self::asegurar_overlay(app)?;
-        let main = app.get_webview_window("main").ok_or_else(|| {
-            tauri::Error::Anyhow(anyhow::anyhow!("ventana principal no encontrada"))
-        })?;
-
-        let scale = main.scale_factor().unwrap_or(1.0);
-        let inner = main.inner_position().unwrap_or_default();
 
         let w_log = rect.width.max(1.0);
         let h_log = rect.height.max(1.0);
 
-        // Rectángulo inválido o demasiado pequeño: no mostrar overlay.
         if w_log < 8.0 || h_log < 8.0 {
             let _ = overlay.hide();
             return Ok(());
@@ -119,24 +109,26 @@ impl EstadoViewport {
         self.ancho_logico = w_log as u32;
         self.alto_logico = h_log as u32;
 
-        let x = inner.x + (rect.x * scale).round() as i32;
-        let y = inner.y + (rect.y * scale).round() as i32;
-        let w = (w_log * scale).round() as u32;
-        let h = (h_log * scale).round() as u32;
+        // Hijo de `main`: coords lógicas relativas al área cliente (como getBoundingClientRect).
+        overlay.set_position(Position::Logical(LogicalPosition::new(rect.x, rect.y)))?;
+        overlay.set_size(Size::Logical(LogicalSize::new(w_log, h_log)))?;
 
-        overlay.set_position(PhysicalPosition::new(x, y))?;
-        overlay.set_size(PhysicalSize::new(w.max(1), h.max(1)))?;
+        let scale = app
+            .get_webview_window("main")
+            .map(|w| w.scale_factor().unwrap_or(1.0))
+            .unwrap_or(1.0);
+        let w_fis = (w_log * scale).round() as u32;
+        let h_fis = (h_log * scale).round() as u32;
 
         if self.gpu.is_none() {
-            let gpu = ViewportGpu::nuevo(overlay.clone(), w.max(1), h.max(1))
+            let gpu = ViewportGpu::nuevo(overlay.clone(), w_fis.max(1), h_fis.max(1))
                 .map_err(|e| tauri::Error::Anyhow(e.into()))?;
             self.gpu = Some(gpu);
         } else if let Some(gpu) = &mut self.gpu {
-            gpu.redimensionar(w.max(1), h.max(1));
+            gpu.redimensionar(w_fis.max(1), h_fis.max(1));
         }
 
         overlay.show()?;
-        overlay.set_focusable(false)?;
 
         Ok(())
     }
@@ -199,7 +191,7 @@ pub type ViewportCompartido = Arc<Mutex<EstadoViewport>>;
 
 /// Oculta la overlay al salir del workspace Compare.
 pub fn ocultar_overlay(app: &AppHandle) -> tauri::Result<()> {
-    if let Some(w) = app.get_webview_window("viewport") {
+    if let Some(w) = app.get_window("viewport") {
         w.hide()?;
     }
     Ok(())

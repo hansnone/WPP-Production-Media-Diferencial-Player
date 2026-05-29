@@ -16,7 +16,9 @@
       return;
     }
     if (!contenedor || !("__TAURI_INTERNALS__" in window)) return;
-    const r = contenedor.getBoundingClientRect();
+    const objetivo =
+      (contenedor.querySelector("#canvas-slot") as HTMLElement | null) ?? contenedor;
+    const r = objetivo.getBoundingClientRect();
     void sincronizarViewport({
       x: r.left,
       y: r.top,

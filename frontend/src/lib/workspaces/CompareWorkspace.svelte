@@ -11,8 +11,10 @@
     width: 100%;
     height: 100%;
     min-height: 200px;
-    /* El vídeo wgpu se dibuja en la ventana overlay; aquí solo reservamos layout. */
+    /* Marco de referencia; el vídeo real está en la ventana nativa overlay. */
+    box-sizing: border-box;
+    border: 1px dashed var(--border);
+    background: #0a0a0a;
     pointer-events: none;
-    opacity: 0;
   }
 </style>

@@ -74,9 +74,9 @@ cargo tauri dev
 
 ## Viewport overlay (M3)
 
-- El vídeo no se dibuja en el DOM: una ventana nativa `viewport` (hija de `main`) recibe frames RGBA del motor y los compone con wgpu.
-- El frontend publica la geometría del host (`CanvasViewportSync`) al redimensionar o cambiar paneles.
-- Fondo negro / transparente (`viewport.html`, `macOSPrivateApi`); overlay oculta hasta el primer rect válido.
+- El vídeo no se dibuja en el DOM: ventana nativa `viewport` (sin webview, hija de `main`) con wgpu.
+- El frontend publica el rect de `#canvas-slot` en coords lógicas (`CanvasViewportSync`); Rust usa posición relativa al padre.
+- Overlay oculta hasta el primer rect válido; `set_ignore_cursor_events` para no bloquear toolbar/timeline.
 - Motor → GPU vía `PuenteViewport` (cola fusionada, sin bloquear play).
 
 ## Fuera de alcance (post-M3)
