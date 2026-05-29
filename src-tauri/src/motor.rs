@@ -475,7 +475,7 @@ pub fn iniciar_motor(
     thread::Builder::new()
         .name("playback-tick".into())
         .spawn(move || loop {
-            thread::sleep(Duration::from_millis(33));
+            thread::sleep(Duration::from_millis(40));
             let _ = tx_tick.send(());
         })
         .expect("hilo tick");

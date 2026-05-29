@@ -8,8 +8,8 @@ use tauri::AppHandle;
 
 use crate::viewport::{enviar_en_main, EstadoViewport};
 
-/// Intervalo mínimo entre `presentar` (≈30 fps) para no ahogar el hilo principal.
-const INTERVALO_PRESENTAR: Duration = Duration::from_millis(33);
+/// Intervalo mínimo entre `presentar` (25 fps, estándar broadcast).
+const INTERVALO_PRESENTAR: Duration = Duration::from_millis(40);
 
 /// Frames pendientes de subir a wgpu (solo el más reciente por canal).
 pub struct PuenteViewport {

@@ -1,6 +1,6 @@
 //! Ventana overlay wgpu alineada con `#canvas-slot` del WebView.
 //!
-//! Ventana nativa sin webview; posición en píxeles físicos respecto al cliente de `main`.
+//! Ventana nativa sin webview; posición absoluta en pantalla (multi-monitor).
 
 use std::sync::{Arc, Mutex};
 
@@ -70,10 +70,8 @@ impl EstadoViewport {
             return Ok(w);
         }
 
-        let parent = app.get_window("main").ok_or_else(|| {
-            tauri::Error::Anyhow(anyhow::anyhow!("ventana principal no encontrada"))
-        })?;
-
+        // Sin `.parent()`: en macOS la ventana hija + posición relativa acaba en el monitor
+        // principal; usamos coords absolutas de pantalla (inner_position + rect DOM).
         let overlay = WindowBuilder::new(app, "viewport")
             .title("")
             .decorations(false)
@@ -81,23 +79,26 @@ impl EstadoViewport {
             .skip_taskbar(true)
             .visible(false)
             .background_color(Color(0, 0, 0, 0))
-            .parent(&parent)?
+            .always_on_top(true)
             .build()?;
 
         Ok(overlay)
     }
 
-    /// DOM lógico → píxeles físicos relativos al área cliente de `main` (ventana hija).
-    fn rect_fisico_cliente(app: &AppHandle, rect: &RectViewport) -> tauri::Result<(i32, i32, u32, u32, f64)> {
+    /// DOM lógico del webview → rectángulo físico en el escritorio (soporta varios monitores).
+    fn rect_pantalla(app: &AppHandle, rect: &RectViewport) -> tauri::Result<(i32, i32, u32, u32, f64)> {
         let main = app
             .get_webview_window("main")
             .ok_or_else(|| tauri::Error::Anyhow(anyhow::anyhow!("ventana main no encontrada")))?;
         let escala = main.scale_factor().unwrap_or(1.0);
-        let rel_x = (rect.x * escala).round() as i32;
-        let rel_y = (rect.y * escala).round() as i32;
+        let origen = main.inner_position().unwrap_or_default();
+
+        let x = origen.x + (rect.x * escala).round() as i32;
+        let y = origen.y + (rect.y * escala).round() as i32;
         let w_fis = (rect.width * escala).round().max(1.0) as u32;
         let h_fis = (rect.height * escala).round().max(1.0) as u32;
-        Ok((rel_x, rel_y, w_fis, h_fis, escala))
+
+        Ok((x, y, w_fis, h_fis, escala))
     }
 
     pub fn sincronizar_recto(
@@ -112,11 +113,11 @@ impl EstadoViewport {
             return Ok(());
         }
 
-        let (rel_x, rel_y, w_fis, h_fis, escala) = Self::rect_fisico_cliente(app, &rect)?;
+        let (x, y, w_fis, h_fis, escala) = Self::rect_pantalla(app, &rect)?;
         self.ancho_logico = (w_fis as f64 / escala).round().max(1.0) as u32;
         self.alto_logico = (h_fis as f64 / escala).round().max(1.0) as u32;
 
-        overlay.set_position(Position::Physical(PhysicalPosition::new(rel_x, rel_y)))?;
+        overlay.set_position(Position::Physical(PhysicalPosition::new(x, y)))?;
         overlay.set_size(Size::Physical(PhysicalSize::new(w_fis, h_fis)))?;
 
         if self.gpu.is_none() {
