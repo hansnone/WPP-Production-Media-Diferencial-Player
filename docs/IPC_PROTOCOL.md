@@ -1,4 +1,4 @@
-# Protocolo IPC — DiffPlayerQC v2 (M1)
+# Protocolo IPC — DiffPlayerQC v2 (M1 + M3)
 
 Comunicación entre el frontend Svelte y el backend Rust (`src-tauri`).
 
@@ -25,6 +25,30 @@ cargo tauri dev
 | `seek` | `pts`: number (segundos) | `SnapshotReproduccion` | Salto absoluto |
 | `step_adelante` | — | `SnapshotReproduccion` | Un fotograma adelante |
 | `step_atras` | — | `SnapshotReproduccion` | Un fotograma atrás |
+| `sincronizar_viewport` | `rect`: `RectViewport` | — | Posiciona/redimensiona ventana overlay wgpu |
+| `ocultar_viewport` | — | — | Oculta overlay al salir del workspace Compare |
+| `establecer_vista_compare` | `vista`: `VistaCompare` | — | Modos compare + uniforms del shader |
+
+### `RectViewport`
+
+```typescript
+{ x: number; y: number; width: number; height: number; }  // coords lógicas getBoundingClientRect
+```
+
+### `VistaCompare`
+
+```typescript
+{
+  modo: "SplitScreen" | "AbsDiff" | "Heatmap" | "SideBySide";
+  diff_mode: "LegacyAbs" | "AbsLinear" | "AbsSqrt" | "SignedDiverging" | "None";
+  split_pos: number;
+  amplifier: number;
+  zoom: number;
+  pan_u: number;
+  pan_v: number;
+  split_horizontal: boolean;
+}
+```
 
 ## Eventos (`listen`)
 
@@ -48,7 +72,13 @@ cargo tauri dev
 }
 ```
 
-## M1 — fuera de alcance
+## Viewport overlay (M3)
 
-- Texturas / canvas wgpu (M3)
-- Proxy EXR, scopes, command palette (M2+)
+- El vídeo no se dibuja en el DOM: una ventana nativa `viewport` (hija de `main`) recibe frames RGBA del motor y los compone con wgpu.
+- El frontend publica la geometría del host (`CanvasViewportSync`) al redimensionar o cambiar paneles.
+- Fondo negro / transparente (`viewport.html`, `macOSPrivateApi`); overlay oculta hasta el primer rect válido.
+- Motor → GPU vía `PuenteViewport` (cola fusionada, sin bloquear play).
+
+## Fuera de alcance (post-M3)
+
+- Proxy EXR, scopes (M5), waveforms Audio (M4)

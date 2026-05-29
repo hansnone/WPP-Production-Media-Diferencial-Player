@@ -98,7 +98,16 @@ Svelte 5 + TS + CSS vars  <--------------------------->  core/ decoder/ render/ 
 
 ### M3 — Render wgpu (1–2 sem)
 
-Vídeo en `#canvas-slot`; modos Split/Diff/Heatmap/SideBySide como v1.
+**Entregables:** crate `diffplayerqc-render` (`compare.wgsl`); ventana overlay Tauri alineada con `#canvas-slot`; panel de modos en workspace Compare.
+
+**Aceptación:**
+
+- [ ] Con A y B cargados, el overlay muestra vídeo sincronizado al slot (ResizeObserver → `sincronizar_viewport`) — QA manual.
+- [x] Modos `SplitScreen`, `AbsDiff`, `Heatmap`, `SideBySide` y `DiffMode` vía `establecer_vista_compare`.
+- [x] `cargo build --workspace` y `pnpm build` sin error.
+- [x] E2E: panel modos compare visible (`compare-mode-panel`).
+
+**Rama:** `m3/render`
 
 ### M4 — Audio nuevo (2 sem)
 

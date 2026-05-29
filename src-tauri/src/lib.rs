@@ -1,8 +1,13 @@
-//! Backend Tauri v2: motor de reproducción M1 e IPC.
+//! Backend Tauri v2: motor de reproducción, viewport wgpu e IPC.
 
 mod motor;
+mod puente_viewport;
+mod viewport;
+
+use std::sync::{Arc, Mutex};
 
 use motor::{enviar_y_esperar, iniciar_motor, CanalUi, OrdenMotor, SnapshotReproduccion};
+use viewport::{EstadoViewport, RectViewport, VistaCompare};
 use tauri::Manager;
 
 pub struct EstadoApp {
@@ -84,12 +89,49 @@ fn step_atras(estado: tauri::State<'_, EstadoApp>) -> Result<SnapshotReproduccio
     enviar_y_esperar(&estado.tx_motor, |resp| OrdenMotor::StepAtras { resp })
 }
 
+#[tauri::command]
+fn ocultar_viewport(
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    viewport::ocultar_overlay(&app).map_err(|e: tauri::Error| e.to_string())
+}
+
+#[tauri::command]
+fn sincronizar_viewport(
+    app: tauri::AppHandle,
+    viewport: tauri::State<'_, Arc<Mutex<EstadoViewport>>>,
+    rect: RectViewport,
+) -> Result<(), String> {
+    let vp = viewport.inner().clone();
+    let app_main = app.clone();
+    viewport::enviar_en_main(&app, move || {
+        if let Ok(mut guard) = vp.lock() {
+            let _ = guard.sincronizar_recto(&app_main, rect);
+        }
+    });
+    Ok(())
+}
+
+#[tauri::command]
+fn establecer_vista_compare(
+    estado: tauri::State<'_, EstadoApp>,
+    vista: VistaCompare,
+) -> Result<(), String> {
+    estado
+        .tx_motor
+        .send(OrdenMotor::EstablecerVista { vista })
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            let tx = iniciar_motor(app.handle().clone());
+            let viewport = Arc::new(Mutex::new(EstadoViewport::nuevo()));
+            app.manage(viewport.clone());
+            let tx = iniciar_motor(app.handle().clone(), viewport);
             app.manage(EstadoApp { tx_motor: tx });
             Ok(())
         })
@@ -101,6 +143,9 @@ pub fn run() {
             seek,
             step_adelante,
             step_atras,
+            sincronizar_viewport,
+            ocultar_viewport,
+            establecer_vista_compare,
         ])
         .run(tauri::generate_context!())
         .expect("error al ejecutar la aplicación Tauri");

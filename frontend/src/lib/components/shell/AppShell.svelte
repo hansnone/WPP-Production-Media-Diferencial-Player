@@ -12,6 +12,7 @@
   import InspectWorkspace from "../../workspaces/InspectWorkspace.svelte";
   import AudioWorkspace from "../../workspaces/AudioWorkspace.svelte";
   import PlaceholderWorkspace from "../../workspaces/PlaceholderWorkspace.svelte";
+  import CompareModePanel from "../compare/CompareModePanel.svelte";
   import { formatearPts } from "../../player";
 
   let paletaAbierta = $state(false);
@@ -127,7 +128,8 @@
     >
       {#if ws === "inspect"}
         <p class="mono">RGB / Vectorscope (M5)</p>
-      {:else}
+      {:else if ws === "compare"}
+        <CompareModePanel />
         <div class="niveles">
           <p class="mono">
             PTS {formatearPts(playerStore.snap?.pts_actual ?? 0)}
@@ -140,7 +142,10 @@
             <span class="chip chip--b">B</span>
             {( (playerStore.snap?.nivel_audio_b ?? 0) * 100).toFixed(0)} %
           </p>
-          <p class="hint">Modos diff (M3)</p>
+        </div>
+      {:else}
+        <div class="niveles">
+          <p class="mono">PTS {formatearPts(playerStore.snap?.pts_actual ?? 0)}</p>
         </div>
       {/if}
     </Panel>

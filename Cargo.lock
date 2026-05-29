@@ -1755,6 +1755,7 @@ dependencies = [
  "crossbeam-channel",
  "dark-light",
  "diffplayerqc-core",
+ "diffplayerqc-render",
  "directories",
  "eframe",
  "egui",
@@ -1781,6 +1782,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "diffplayerqc-render"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytemuck",
+ "diffplayerqc-core",
+ "pollster",
+ "wgpu",
+]
+
+[[package]]
 name = "diffplayerqc-tauri"
 version = "0.1.0"
 dependencies = [
@@ -1788,7 +1800,9 @@ dependencies = [
  "crossbeam-channel",
  "diffplayerqc",
  "diffplayerqc-core",
+ "diffplayerqc-render",
  "log",
+ "pollster",
  "rodio",
  "serde",
  "serde_json",

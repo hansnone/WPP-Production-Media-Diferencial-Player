@@ -34,4 +34,10 @@ test.describe("M2 — UI shell", () => {
     await panelIzq.getByRole("button", { name: "Plegar panel" }).click();
     await expect(page.getByTestId("panel-tab-izquierdo")).toBeVisible();
   });
+
+  test("panel modos compare en workspace Compare", async ({ page }) => {
+    await page.getByTestId("workspace-tab-compare").click();
+    await expect(page.getByTestId("workspace-compare")).toBeAttached();
+    await expect(page.getByTestId("compare-mode-panel")).toBeVisible();
+  });
 });

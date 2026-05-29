@@ -1,0 +1,13 @@
+[package]
+name = "diffplayerqc-render"
+version = "0.1.0"
+edition = "2021"
+description = "Compositor wgpu DiffPlayerQC (compare.wgsl)"
+license = "MIT"
+
+[dependencies]
+anyhow = "1"
+bytemuck = { version = "1", features = ["derive"] }
+diffplayerqc-core = { path = "../core" }
+pollster = "0.3"
+wgpu = { version = "0.19", features = ["wgsl"] }
