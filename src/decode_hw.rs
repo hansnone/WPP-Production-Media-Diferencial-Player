@@ -210,6 +210,9 @@ pub unsafe fn intentar_inicializar_hw(
 
 /// Libera recursos HW si `avcodec_open2` falla tras configurar el contexto.
 pub unsafe fn liberar_parcial_hw(codec_ctx: *mut ffi::AVCodecContext) {
+    if codec_ctx.is_null() {
+        return;
+    }
     if !(*codec_ctx).hw_frames_ctx.is_null() {
         ffi::av_buffer_unref(&mut (*codec_ctx).hw_frames_ctx);
     }
@@ -223,8 +226,11 @@ pub unsafe fn liberar_parcial_hw(codec_ctx: *mut ffi::AVCodecContext) {
     }
 }
 
-/// Libera `opaque` al cerrar el decoder (el buffer HW lo libera `avcodec_free_context`).
+/// Libera `opaque` antes de `avcodec_free_context` (FFmpeg no libera ese puntero).
 pub unsafe fn liberar_opaque(codec_ctx: *mut ffi::AVCodecContext) {
+    if codec_ctx.is_null() {
+        return;
+    }
     if !(*codec_ctx).opaque.is_null() {
         let _ = Box::from_raw((*codec_ctx).opaque as *mut ContextoFormatoHw);
         (*codec_ctx).opaque = ptr::null_mut();

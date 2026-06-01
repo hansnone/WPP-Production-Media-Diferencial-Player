@@ -306,7 +306,10 @@ struct DecoderCtx {
 impl Drop for DecoderCtx {
     fn drop(&mut self) {
         unsafe {
+            // `opaque` del callback HW hay que liberarlo antes de `avcodec_free_context`
+            // (después ese puntero queda en NULL y liberar_opaque haría deref nulo).
             if !self.codec_ctx.is_null() {
+                decode_hw::liberar_opaque(self.codec_ctx);
                 ffi::avcodec_free_context(&mut self.codec_ctx);
             }
             if !self.audio_codec_ctx.is_null() {
@@ -324,7 +327,6 @@ impl Drop for DecoderCtx {
             if !self.swr_ctx.is_null() {
                 ffi::swr_free(&mut self.swr_ctx);
             }
-            decode_hw::liberar_opaque(self.codec_ctx);
         }
     }
 }
