@@ -10,9 +10,11 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/ES/1.0.0/).
 - **M9:** loudness EBU R128 — `analisis_loudness.rs`, integración en `forma_onda.rs`; true peak, LRA, alertas; overlay LUFS en waveforms; panel EBU en workspace Audio.
 - **M10:** eventos QC y notas — `eventos_qc` en core, persistencia JSON, workspace Report, panel Compare, timeline de marcadores, IPC seek/listar/crear.
 - **M11:** decode hardware FFmpeg — `decode_hw.rs`, fallback software, etiquetas `decode_a`/`decode_b` en UI.
+- **M12:** ProRes/DNxHR — `formatos_pro.rs`, alto bit depth vía swscale, rango legal/full y Rec.709/2020.
+
 ### Planificado
 
-- Roadmap **M12–M16** en [`docs/ROADMAP_M8_M16.md`](docs/ROADMAP_M8_M16.md).
+- Roadmap **M13–M16** en [`docs/ROADMAP_M8_M16.md`](docs/ROADMAP_M8_M16.md).
 
 ## [2.0.0] — 2026-05-29
 

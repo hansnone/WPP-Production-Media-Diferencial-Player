@@ -17,6 +17,7 @@ use ffmpeg_sys_next as ffi;
 const SWS_ESCALA: i32 = 1;
 
 use crate::decode_hw::{self, EstadoHwDecode};
+use crate::formatos_pro;
 use crate::trace_log;
 use crate::types::{AudioFrame, ColorMetadata, DecoderCommand, VideoFrame};
 
@@ -185,6 +186,7 @@ fn extract_metadata(path: &str) -> Result<ColorMetadata> {
         let colorspace = color_space_str(par.color_space);
         let color_transfer = color_trc_str(par.color_trc);
         let color_primaries = color_primaries_str(par.color_primaries);
+        let color_range = formatos_pro::color_range_str(par.color_range);
         // Pixel format name
         let pix_name = ffi::av_get_pix_fmt_name(std::mem::transmute(par.format));
         let pixel_format = if pix_name.is_null() {
@@ -253,6 +255,7 @@ fn extract_metadata(path: &str) -> Result<ColorMetadata> {
             colorspace,
             color_transfer,
             color_primaries,
+            color_range,
             pixel_format,
             width: par.width as u32,
             height: par.height as u32,
@@ -377,11 +380,21 @@ fn open_decoder(path: &str, ancho_max_salida: Option<u32>) -> Result<DecoderCtx>
             return Err(anyhow!("params_to_ctx: {}", av_err(ret)));
         }
 
+        let codec_id = (*par).codec_id;
+        let es_pro = formatos_pro::es_codec_profesional(codec_id);
+        if let Some(etiq) = formatos_pro::etiqueta_codec_profesional(codec_id) {
+            log::info!("Formato profesional detectado: {etiq}");
+        }
+
         // Hilos CPU: auto en software; HW los fija `decode_hw` a 1.
         (*codec_ctx).thread_count = 0;
         (*codec_ctx).thread_type = ffi::FF_THREAD_FRAME as i32;
 
-        let mut hw = decode_hw::intentar_inicializar_hw(codec_ctx, codec)?;
+        let mut hw = if es_pro {
+            None
+        } else {
+            decode_hw::intentar_inicializar_hw(codec_ctx, codec)?
+        };
 
         let ret = ffi::avcodec_open2(codec_ctx, codec, ptr::null_mut());
         if ret < 0 {
@@ -435,6 +448,19 @@ fn open_decoder(path: &str, ancho_max_salida: Option<u32>) -> Result<DecoderCtx>
         );
         if sws_ctx.is_null() {
             return Err(anyhow!("sws_getContext failed"));
+        }
+
+        formatos_pro::aplicar_detalles_color_sws(
+            sws_ctx,
+            (*par).color_primaries,
+            (*par).color_range,
+        );
+
+        if formatos_pro::es_pix_fmt_alto_bitdepth(formato_sws) {
+            log::info!(
+                "Pixel format alto bit depth: {:?} → RGBA 8-bit",
+                formato_sws
+            );
         }
 
         let mut rgba_scratch = ffi::av_frame_alloc();

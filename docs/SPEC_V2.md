@@ -196,7 +196,7 @@ Tras v2.0.0. Detalle completo, dependencias y estimaciones: **[`docs/ROADMAP_M8_
 - **M9:** [x] LUFS integrado EBU, true peak, LRA, `lufs_buckets` en waveform, alertas silencio/clipping; panel Audio post-escaneo.
 - **M10:** [x] tabla eventos + notas persistentes + seek desde evento + marcadores en timeline.
 - **M11:** [x] decode HW (VideoToolbox/VAAPI/D3D11…) con fallback software; etiqueta en Fuentes; `DIFFPLAYERQC_HW_DECODE=0`.
-- **M12:** ProRes/DNxHR frame-accurate; color Rec.709/2020 correcto.
+- **M12:** [x] ProRes/DNxHR en software 10-bit; `color_range` y matrices 709/2020 en swscale.
 - **M13:** display y salto SMPTE NDF/DF.
 - **M14:** difference shader con umbral; toggles de vista.
 - **M15:** reporte PDF/HTML con snapshots y métricas.

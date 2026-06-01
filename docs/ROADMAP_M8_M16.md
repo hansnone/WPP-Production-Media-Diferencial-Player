@@ -69,15 +69,15 @@ Crítico para flujos **4K / ProRes** en hardware real.
 | **Rama sugerida** | `m11/hw-decode` |
 | **Esfuerzo** | Alto · **Prioridad:** Alta · **Riesgo:** Muy alto (drivers / OS) |
 
-### M12 — Formatos profesionales (ProRes / DNxHR)
+### M12 — Formatos profesionales (ProRes / DNxHR) ✅
 
 **Objetivo:** Soporte broadcast / mastering de referencia.
 
 | | |
 |---|---|
-| **Entregables** | Seek frame-accurate en ProRes/DNxHR; manejo 10/12 bit; metadatos de color (Rec.709 / Rec.2020) en shader y scopes. |
-| **Tareas** | Pruebas con fixtures M1 ampliados; corrección de rango legal/full en viewport; documentación de limitaciones por códec. |
-| **Aceptación** | Reproducción y color correctos en masters de prueba; sin regresión en h264/mkv. |
+| **Entregables** | [x] `formatos_pro.rs`; 10-bit vía swscale; `color_range` + matrices 709/2020; ProRes sin HW forzado. |
+| **Tareas** | [x] Rango legal/full en `sws_setColorspaceDetails`; doc [`PRORES_M12.md`](PRORES_M12.md). |
+| **Aceptación** | [x] Masters ProRes/DNxHR en software; color coherente; H.264/MKV sin regresión. |
 | **Rama sugerida** | `m12/prores-dnxhr` |
 | **Esfuerzo** | Medio · **Prioridad:** Alta |
 

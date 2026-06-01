@@ -56,6 +56,8 @@ pub struct ColorMetadata {
     pub colorspace: String,
     pub color_transfer: String,
     pub color_primaries: String,
+    /// `mpeg` (legal/TV) o `jpeg` (full) — importante en ProRes/DNxHR (M12).
+    pub color_range: String,
     pub pixel_format: String,
     pub width: u32,
     pub height: u32,
