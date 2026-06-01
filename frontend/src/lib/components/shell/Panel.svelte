@@ -1,6 +1,7 @@
 <script lang="ts">
   import { ChevronLeft, ChevronRight } from "@lucide/svelte";
   import type { Snippet } from "svelte";
+  import { idiomaStore } from "../../i18n/idioma.svelte";
 
   interface Props {
     titulo: string;
@@ -23,7 +24,12 @@
   >
     <header class="panel__cabecera">
       <span class="panel__titulo">{titulo}</span>
-      <button type="button" class="panel__plegar" onclick={onalternar} aria-label="Plegar panel">
+      <button
+        type="button"
+        class="panel__plegar"
+        onclick={onalternar}
+        aria-label={idiomaStore.t("panel.plegar")}
+      >
         {#if lado === "izquierdo"}
           <ChevronLeft size={16} strokeWidth={1.5} />
         {:else}
@@ -41,7 +47,7 @@
     class="panel-tab"
     onclick={onalternar}
     data-testid="panel-tab-{lado}"
-    aria-label="Expandir {titulo}"
+    aria-label="{idiomaStore.t('panel.expandir')} {titulo}"
   >
     <span class="panel-tab__label">{titulo}</span>
   </button>

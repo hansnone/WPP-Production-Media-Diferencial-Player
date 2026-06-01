@@ -13,7 +13,9 @@
   import AudioWorkspace from "../../workspaces/AudioWorkspace.svelte";
   import PlaceholderWorkspace from "../../workspaces/PlaceholderWorkspace.svelte";
   import CompareModePanel from "../compare/CompareModePanel.svelte";
+  import InspectScopesPanel from "../scopes/InspectScopesPanel.svelte";
   import { formatearPts } from "../../player";
+  import { idiomaStore } from "../../i18n/idioma.svelte";
 
   let paletaAbierta = $state(false);
   let seekInput = $state(0);
@@ -47,13 +49,23 @@
     await playerStore.seekPts(seekInput);
   }
 
+  const tituloPanelDerecho = $derived.by(() => {
+    if (ws === "audio") return idiomaStore.t("panel.loudness");
+    if (ws === "inspect") return idiomaStore.t("panel.histograma");
+    return idiomaStore.t("panel.diffAudio");
+  });
+
   const fabricaPaleta = {
+    t: (clave: Parameters<typeof idiomaStore.t>[0]) => idiomaStore.t(clave),
     abrirA: () => playerStore.abrir("a"),
     abrirB: () => playerStore.abrir("b"),
     playPausa: () => playerStore.playPausa(),
     irWorkspace: (id: typeof ws) => layoutStore.cambiarWorkspace(id),
     togglePanelIzq: () => layoutStore.alternarPanel("izquierdo"),
     togglePanelDer: () => layoutStore.alternarPanel("derecho"),
+    idiomaEs: () => idiomaStore.establecer("es"),
+    idiomaEn: () => idiomaStore.establecer("en"),
+    resetLayout: () => layoutStore.resetearWorkspaceActual(),
   };
 </script>
 
@@ -68,9 +80,7 @@
   />
 
   {#if !playerStore.enTauri && playerStore.inicializado}
-    <p class="aviso">
-      Modo navegador: ejecuta <code>cargo tauri dev</code> para IPC completo.
-    </p>
+    <p class="aviso">{idiomaStore.t("aviso.navegador")}</p>
   {/if}
 
   <div
@@ -79,7 +89,7 @@
     data-testid="workspace-grid"
   >
     <Panel
-      titulo="Fuentes"
+      titulo={idiomaStore.t("panel.fuentes")}
       lado="izquierdo"
       visible={disp.izquierdoVisible}
       anchoPx={disp.anchoIzquierdoPx}
@@ -88,11 +98,21 @@
       <div class="fuentes">
         <div class="fuente fuente--a">
           <span class="chip chip--a">A</span>
-          <span class="mono">{playerStore.snap?.ruta_a ?? "Sin archivo"}</span>
+          <span class="mono">{playerStore.snap?.ruta_a ?? idiomaStore.t("fuentes.sinArchivo")}</span>
+          {#if playerStore.enTauri}
+            <button type="button" class="btn-fuente" onclick={() => playerStore.abrir("a")}>
+              {idiomaStore.t("menu.abrirA")}
+            </button>
+          {/if}
         </div>
         <div class="fuente fuente--b">
           <span class="chip chip--b">B</span>
-          <span class="mono">{playerStore.snap?.ruta_b ?? "Sin archivo"}</span>
+          <span class="mono">{playerStore.snap?.ruta_b ?? idiomaStore.t("fuentes.sinArchivo")}</span>
+          {#if playerStore.enTauri}
+            <button type="button" class="btn-fuente" onclick={() => playerStore.abrir("b")}>
+              {idiomaStore.t("menu.abrirB")}
+            </button>
+          {/if}
         </div>
       </div>
     </Panel>
@@ -107,27 +127,27 @@
       {:else if ws === "report"}
         <PlaceholderWorkspace
           id="report"
-          titulo="Report"
-          mensaje="Vista PDF — disponible en hitos posteriores."
+          titulo={idiomaStore.t("workspace.report")}
+          mensaje={idiomaStore.t("placeholder.report")}
         />
       {:else}
         <PlaceholderWorkspace
           id="export"
-          titulo="Export"
-          mensaje="Formulario de exportación — disponible en hitos posteriores."
+          titulo={idiomaStore.t("workspace.export")}
+          mensaje={idiomaStore.t("placeholder.export")}
         />
       {/if}
     </main>
 
     <Panel
-      titulo={ws === "audio" ? "Loudness" : ws === "inspect" ? "Histograma" : "Diff / Audio"}
+      titulo={tituloPanelDerecho}
       lado="derecho"
       visible={disp.derechoVisible && ws !== "audio" && ws !== "report" && ws !== "export"}
       anchoPx={disp.anchoDerechoPx}
       onalternar={() => layoutStore.alternarPanel("derecho")}
     >
       {#if ws === "inspect"}
-        <p class="mono">RGB / Vectorscope (M5)</p>
+        <InspectScopesPanel />
       {:else if ws === "compare"}
         <CompareModePanel />
         <div class="niveles">
@@ -156,6 +176,8 @@
   abierta={paletaAbierta}
   oncerrar={() => (paletaAbierta = false)}
   fabrica={fabricaPaleta}
+  placeholder={idiomaStore.t("palette.placeholder")}
+  tituloDialogo={idiomaStore.t("palette.titulo")}
 />
 
 <style>
@@ -183,10 +205,14 @@
     transition: grid-template-columns var(--panel-transition);
   }
   .centro {
+    display: flex;
+    flex-direction: column;
     min-width: 0;
     min-height: 0;
+    height: 100%;
     overflow: hidden;
     padding: 8px;
+    box-sizing: border-box;
     background: var(--bg-app);
   }
   .fuentes {
@@ -198,6 +224,19 @@
     display: flex;
     flex-direction: column;
     gap: 4px;
+  }
+  .btn-fuente {
+    align-self: flex-start;
+    font-size: 11px;
+    padding: 4px 8px;
+    background: var(--bg-app);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    border-radius: var(--radius);
+    cursor: pointer;
+  }
+  .btn-fuente:hover {
+    border-color: var(--accent-primary);
   }
   .mono {
     font-family: var(--font-mono);

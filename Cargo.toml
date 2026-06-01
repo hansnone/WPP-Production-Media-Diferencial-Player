@@ -17,30 +17,46 @@ path = "src/lib.rs"
 [[bin]]
 name = "diffplayerqc"
 path = "src/main.rs"
+required-features = ["egui-app"]
+
+# egui-app: binario v1 (eframe). Sin este feature, solo librería (decoder, scopes…) para Tauri.
+[features]
+default = ["egui-app"]
+egui-app = [
+    "dep:eframe",
+    "dep:egui",
+    "dep:egui-wgpu",
+    "dep:wgpu",
+    "dep:dark-light",
+    "dep:rfd",
+    "dep:image",
+    "dep:directories",
+    "dep:xcap",
+]
 
 [dependencies]
 diffplayerqc-core = { path = "crates/core" }
 diffplayerqc-render = { path = "crates/render" }
-eframe        = { version = "0.27", features = ["wgpu", "persistence"] }
-egui          = "0.27"
-egui-wgpu     = "0.27"
-wgpu          = { version = "0.19", features = ["wgsl"] }
 ffmpeg-sys-next = "7.1"
 crossbeam-channel = "0.5"
 anyhow        = "1"
 bytemuck      = { version = "1", features = ["derive"] }
-dark-light    = "1"
-rfd           = "0.14"
 log           = "0.4"
 env_logger    = "0.11"
 parking_lot   = "0.12"
-image = "0.25.9"
-directories = "6.0.0"
 chrono = "0.4.44"
-xcap = "0.8.3"
 rodio = "0.19"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+eframe        = { version = "0.27", features = ["wgpu", "persistence"], optional = true }
+egui          = { version = "0.27", optional = true }
+egui-wgpu     = { version = "0.27", optional = true }
+wgpu          = { version = "0.19", features = ["wgsl"], optional = true }
+dark-light    = { version = "1", optional = true }
+rfd           = { version = "0.14", optional = true }
+image = { version = "0.25.9", optional = true }
+directories = { version = "6.0.0", optional = true }
+xcap = { version = "0.8.3", optional = true }
 
 # Por defecto: velocidad para uso interactivo QC. Ver docs/BUILD_PROFILES.md.
 [profile.release]

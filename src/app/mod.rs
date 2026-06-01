@@ -408,7 +408,7 @@ impl DiffPlayerApp {
 
     /// Load a video from a filesystem path into the given channel, replacing any existing video.
     pub fn open_video_from_path(&mut self, path_str: String, chan: Channel, ctx: &egui::Context) {
-        match decoder::spawn_decoder(&path_str) {
+        match decoder::spawn_decoder(&path_str, false, None) {
             Ok((cmd_tx, frame_rx, audio_rx, meta)) => {
                 let handle = DecoderHandle {
                     cmd_tx,
@@ -477,7 +477,7 @@ impl DiffPlayerApp {
 
                 if show {
                     let (w, h) = (frame.width, frame.height);
-                    let data = frame.rgba_data.clone();
+                    let data = frame.rgba_data.as_ref();
                     {
                         let mut rend = self.renderer.lock();
                         if is_a {
@@ -570,7 +570,8 @@ impl DiffPlayerApp {
             pan_v: self.view.pan_v,
             scale_u,
             scale_v,
-            bg_color: self.view.canvas_bg_color,
+            scale_u_b: scale_u,
+            scale_v_b: scale_v,
             split_horizontal: if self.view.split_horizontal { 1 } else { 0 },
         };
     }

@@ -5,9 +5,17 @@
     abierta: boolean;
     oncerrar: () => void;
     fabrica: Parameters<typeof crearComandos>[0];
+    placeholder?: string;
+    tituloDialogo?: string;
   }
 
-  let { abierta, oncerrar, fabrica }: Props = $props();
+  let {
+    abierta,
+    oncerrar,
+    fabrica,
+    placeholder = "Buscar comando…",
+    tituloDialogo = "Paleta de comandos",
+  }: Props = $props();
 
   let consulta = $state("");
   let indice = $state(0);
@@ -60,7 +68,7 @@
       class="dialogo"
       role="dialog"
       aria-modal="true"
-      aria-label="Paleta de comandos"
+      aria-label={tituloDialogo}
       tabindex="-1"
       onkeydown={(e) => e.stopPropagation()}
       onclick={(e) => e.stopPropagation()}
@@ -68,7 +76,7 @@
       <input
         class="entrada"
         type="search"
-        placeholder="Buscar comando…"
+        {placeholder}
         bind:value={consulta}
         data-testid="command-palette-input"
         autofocus

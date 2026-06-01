@@ -124,6 +124,21 @@ class LayoutStore {
       porWorkspace: this.porWorkspace,
     });
   }
+
+  /** Restaura paneles del workspace activo a los valores por defecto de M2. */
+  resetearWorkspaceActual() {
+    const inicial = disposicionInicial();
+    this.porWorkspace[this.workspaceActivo] = {
+      ...inicial[this.workspaceActivo],
+    };
+    this.persistir();
+  }
+
+  /** Restaura todos los workspaces y mantiene el activo actual. */
+  resetearTodo() {
+    this.porWorkspace = disposicionInicial();
+    this.persistir();
+  }
 }
 
 export const layoutStore = new LayoutStore();

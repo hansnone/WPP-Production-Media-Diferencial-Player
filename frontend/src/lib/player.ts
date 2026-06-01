@@ -14,6 +14,25 @@ export interface SnapshotReproduccion {
   fps: number;
   nivel_audio_a: number;
   nivel_audio_b: number;
+  mute_a: boolean;
+  mute_b: boolean;
+  vista_b64_a?: string | null;
+  vista_b64_b?: string | null;
+  /** Respaldo: A o B. */
+  vista_b64?: string | null;
+  vista_ancho?: number;
+  vista_alto?: number;
+  /** Solo sube cuando hay JPEG nuevo (no reenviar base64 en cada tick). */
+  vista_seq?: number;
+}
+
+/** Frame JPEG asíncrono (evento `vista-frame`, solo fallback canvas). */
+export interface VistaFrameEvent {
+  canal: string;
+  seq: number;
+  ancho: number;
+  alto: number;
+  b64: string;
 }
 
 export type Canal = "a" | "b";
@@ -81,6 +100,18 @@ export async function stepAdelante(): Promise<SnapshotReproduccion> {
 
 export async function stepAtras(): Promise<SnapshotReproduccion> {
   return invoke("step_atras");
+}
+
+export async function alternarMuteAudio(canal: Canal): Promise<SnapshotReproduccion> {
+  return invoke("alternar_mute_audio", { canal });
+}
+
+export function escucharVistaFrames(
+  callback: (frame: VistaFrameEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<VistaFrameEvent>("vista-frame", (ev) => {
+    callback(ev.payload);
+  });
 }
 
 export function escucharTicks(

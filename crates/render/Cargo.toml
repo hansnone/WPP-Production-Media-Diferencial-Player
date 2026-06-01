@@ -7,6 +7,7 @@ license = "MIT"
 
 [dependencies]
 anyhow = "1"
+log = "0.4"
 bytemuck = { version = "1", features = ["derive"] }
 diffplayerqc-core = { path = "../core" }
 pollster = "0.3"

@@ -1,37 +1,54 @@
 <script lang="ts">
-  import { establecerVistaCompare, type VistaCompare } from "../../viewport";
-  import type { CompareMode, DiffMode } from "../../compare";
+  import { onMount } from "svelte";
+  import { compareViewStore } from "../../stores/compareView.svelte";
   import { MODOS_COMPARACION, MODOS_DIFF } from "../../compare";
 
-  let vista = $state<VistaCompare>({
-    modo: "SplitScreen",
-    diff_mode: "AbsLinear",
-    split_pos: 0.5,
-    amplifier: 5,
-    zoom: 1,
-    pan_u: 0,
-    pan_v: 0,
-    split_horizontal: false,
+  const vista = $derived(compareViewStore.vista);
+
+  const esSoloA = $derived(
+    vista.modo === "SplitScreen" && vista.split_pos > 0.95,
+  );
+  const esSoloB = $derived(
+    vista.modo === "SplitScreen" && vista.split_pos < 0.05,
+  );
+  const esCortina = $derived(
+    vista.modo === "SplitScreen" && !esSoloA && !esSoloB,
+  );
+
+  onMount(() => {
+    void compareViewStore.aplicar();
   });
-
-  async function aplicar() {
-    if ("__TAURI_INTERNALS__" in window) {
-      await establecerVistaCompare(vista);
-    }
-  }
-
-  function setModo(m: CompareMode) {
-    vista.modo = m;
-    void aplicar();
-  }
-
-  function setDiff(d: DiffMode) {
-    vista.diff_mode = d;
-    void aplicar();
-  }
 </script>
 
 <div class="modos" data-testid="compare-mode-panel">
+  <p class="titulo">Vista rápida</p>
+  <div class="fila">
+    <button
+      type="button"
+      class="modo-btn"
+      class:activo={esSoloA}
+      onclick={() => compareViewStore.soloA()}
+    >
+      Solo A
+    </button>
+    <button
+      type="button"
+      class="modo-btn"
+      class:activo={esCortina}
+      onclick={() => compareViewStore.cortina()}
+    >
+      Cortina
+    </button>
+    <button
+      type="button"
+      class="modo-btn"
+      class:activo={esSoloB}
+      onclick={() => compareViewStore.soloB()}
+    >
+      Solo B
+    </button>
+  </div>
+
   <p class="titulo">Modo</p>
   <div class="fila">
     {#each MODOS_COMPARACION as m (m)}
@@ -39,7 +56,7 @@
         type="button"
         class="modo-btn"
         class:activo={vista.modo === m}
-        onclick={() => setModo(m)}
+        onclick={() => compareViewStore.setModo(m)}
       >
         {m}
       </button>
@@ -54,7 +71,7 @@
           type="button"
           class="modo-btn"
           class:activo={vista.diff_mode === d}
-          onclick={() => setDiff(d)}
+          onclick={() => compareViewStore.setDiff(d)}
         >
           {d}
         </button>
@@ -62,21 +79,49 @@
     </div>
   {/if}
 
+  {#if vista.modo === "SplitScreen"}
+    <button
+      type="button"
+      class="modo-btn ancho"
+      onclick={() => {
+        compareViewStore.vista.split_horizontal = !compareViewStore.vista.split_horizontal;
+        void compareViewStore.aplicar();
+      }}
+    >
+      {vista.split_horizontal ? "Cortina horizontal" : "Cortina vertical"}
+    </button>
+  {/if}
+
   <label class="slider">
     Split
-    <input type="range" min="0" max="1" step="0.01" bind:value={vista.split_pos} onchange={aplicar} />
-  </label>
-  <label class="slider">
-    Amp
     <input
       type="range"
-      min="1"
-      max="50"
-      step="0.5"
-      bind:value={vista.amplifier}
-      onchange={aplicar}
+      min="0"
+      max="1"
+      step="0.01"
+      value={vista.split_pos}
+      oninput={(e) => {
+        compareViewStore.setSplitPos(Number(e.currentTarget.value));
+        void compareViewStore.aplicar();
+      }}
     />
   </label>
+  {#if vista.modo === "AbsDiff" || vista.modo === "Heatmap"}
+    <label class="slider">
+      Amp
+      <input
+        type="range"
+        min="1"
+        max="50"
+        step="0.5"
+        value={vista.amplifier}
+        oninput={(e) => {
+          compareViewStore.vista.amplifier = Number(e.currentTarget.value);
+          void compareViewStore.aplicar();
+        }}
+      />
+    </label>
+  {/if}
 </div>
 
 <style>
@@ -107,6 +152,11 @@
     cursor: pointer;
     text-transform: uppercase;
     letter-spacing: 0.03em;
+  }
+  .modo-btn.ancho {
+    width: 100%;
+    text-transform: none;
+    font-size: 10px;
   }
   .modo-btn.activo {
     background: var(--accent-primary);

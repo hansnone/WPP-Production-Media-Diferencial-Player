@@ -1,15 +1,16 @@
 {
   "name": "diffplayerqc-monorepo",
   "private": true,
-  "version": "2.0.0-alpha",
+  "version": "2.0.0",
   "scripts": {
     "build": "pnpm --dir frontend build",
     "test": "pnpm --dir frontend test",
     "test:e2e": "pnpm --dir frontend test:e2e",
     "dev:frontend": "pnpm --dir frontend dev",
-    "tauri": "pnpm --dir src-tauri exec tauri",
+    "tauri": "cargo tauri",
     "tauri:dev": "cargo tauri dev",
-    "tauri:build": "cargo tauri build"
+    "tauri:build": "cargo tauri build --profile release-small",
+    "tauri:build:debug": "cargo tauri build"
   },
   "packageManager": "pnpm@9.15.0"
 }

@@ -1,6 +1,6 @@
 [package]
 name = "diffplayerqc-tauri"
-version = "0.1.0"
+version = "2.0.0"
 description = "Shell Tauri 2 DiffPlayerQC v2"
 edition = "2021"
 
@@ -14,13 +14,19 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 anyhow = "1"
 crossbeam-channel = "0.5"
-diffplayerqc = { path = ".." }
+diffplayerqc = { path = "..", default-features = false }
 diffplayerqc-core = { path = "../crates/core" }
 diffplayerqc-render = { path = "../crates/render" }
+image = "0.25"
+base64 = "0.22"
 log = "0.4"
+env_logger = "0.11"
 pollster = "0.3"
 rodio = "0.19"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri = { version = "2", features = ["unstable", "macos-private-api"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+cocoa = "0.26"
 tauri-plugin-dialog = "2"

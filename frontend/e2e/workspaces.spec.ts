@@ -31,7 +31,7 @@ test.describe("M2 — UI shell", () => {
     await page.getByTestId("workspace-tab-compare").click();
     const panelIzq = page.getByTestId("panel-izquierdo");
     await expect(panelIzq).toBeVisible();
-    await panelIzq.getByRole("button", { name: "Plegar panel" }).click();
+    await panelIzq.getByRole("button", { name: /Plegar panel|Collapse panel/i }).click();
     await expect(page.getByTestId("panel-tab-izquierdo")).toBeVisible();
   });
 
@@ -39,5 +39,23 @@ test.describe("M2 — UI shell", () => {
     await page.getByTestId("workspace-tab-compare").click();
     await expect(page.getByTestId("workspace-compare")).toBeAttached();
     await expect(page.getByTestId("compare-mode-panel")).toBeVisible();
+  });
+
+  test("workspace Inspect muestra panel de scopes", async ({ page }) => {
+    await page.getByTestId("workspace-tab-inspect").click();
+    await expect(page.getByTestId("workspace-inspect")).toBeVisible();
+    await expect(page.getByTestId("inspect-scopes-panel")).toBeVisible();
+    await expect(page.getByTestId("scope-histograma")).toBeVisible();
+    await expect(page.getByTestId("scope-vectoscopio")).toBeVisible();
+    await expect(page.getByTestId("scope-monitor-luma")).toBeVisible();
+  });
+
+  test("workspace Audio muestra loudness y waveforms", async ({ page }) => {
+    await page.getByTestId("workspace-tab-audio").click();
+    await expect(page.getByTestId("workspace-audio")).toBeVisible();
+    await expect(page.getByTestId("audio-loudness")).toBeVisible();
+    await expect(page.getByTestId("waveform-canvas-a")).toBeAttached();
+    await expect(page.getByTestId("waveform-canvas-b")).toBeAttached();
+    await expect(page.getByTestId("waveform-canvas-diff")).toBeAttached();
   });
 });

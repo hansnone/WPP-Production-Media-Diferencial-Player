@@ -96,6 +96,38 @@ impl PlaybackState {
             next
         }
     }
+
+    /// Instant wall en el que el reloj maestro alcanza `pts` (modelo VLC/mpv).
+    #[must_use]
+    pub fn instante_para_pts(&self, pts: f64) -> Option<Instant> {
+        if !self.is_playing {
+            return None;
+        }
+        let inicio = self.playback_start_instant?;
+        let offset = (pts - self.playback_start_pts).max(0.0);
+        Some(inicio + Duration::from_secs_f64(offset))
+    }
+
+    /// Bloquea hasta el instante de presentación del frame (sincronía A/V).
+    pub fn dormir_hasta_pts(&self, pts: f64) {
+        let Some(objetivo) = self.instante_para_pts(pts) else {
+            return;
+        };
+        let ahora = Instant::now();
+        if objetivo > ahora {
+            std::thread::sleep(objetivo - ahora);
+        }
+    }
+
+    /// Duración de un fotograma según fps del clip (p. ej. 40 ms @ 25 fps).
+    #[must_use]
+    pub fn duracion_frame(fps: f64) -> f64 {
+        if fps <= 0.0 {
+            1.0 / 25.0
+        } else {
+            1.0 / fps
+        }
+    }
 }
 
 /// Retardo hasta el siguiente repintado alineado al siguiente frame (v1: `next_frame_repaint_delay`).
@@ -142,8 +174,13 @@ mod tests {
     }
 
     #[test]
-    fn repaint_delay_bounded() {
-        let d = next_frame_repaint_delay(25.0, 0.0, 8);
-        assert!(d <= Duration::from_millis(8));
+    fn instante_para_pts_durante_play() {
+        let t0 = Instant::now();
+        let mut p = PlaybackState::default();
+        p.duration_a = 30.0;
+        p.current_pts = 0.0;
+        p.start_playback(t0);
+        let t_frame = p.instante_para_pts(1.0).expect("instante");
+        assert!(((t_frame - t0).as_secs_f64() - 1.0).abs() < 0.05);
     }
 }

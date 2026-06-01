@@ -1,26 +1,31 @@
 //! Decodificación de vídeo y audio en un hilo dedicado (API C de FFmpeg vía `ffmpeg-sys-next`).
 //!
 //! El bucle recibe [`DecoderCommand`](crate::types::DecoderCommand), emite [`VideoFrame`](crate::types::VideoFrame)
-//! (YUV→RGBA con libswscale, ver `convert_frame`) y [`AudioFrame`](crate::types::AudioFrame) vía `swr`.
+//! (YUV→RGBA con libswscale [`SWS_BILINEAR`], ver `convert_frame`) y [`AudioFrame`](crate::types::AudioFrame) vía `swr`.
 //! El hilo de UI **no** debe bloquearse en estas operaciones.
 
 use anyhow::{anyhow, Context, Result};
 use crossbeam_channel::{Receiver, Sender};
 use std::ffi::{CStr, CString};
 use std::ptr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use ffmpeg_sys_next as ffi;
 
-/// `SWS_FAST_BILINEAR` (libswscale): más barato que `SWS_BILINEAR` para QC en tiempo real.
-const SWS_FAST_BILINEAR: i32 = 1 << 2;
+/// `SWS_FAST_BILINEAR`: prioriza velocidad en reproducción (1080p compare en tiempo real).
+const SWS_ESCALA: i32 = 1;
 
 use crate::trace_log;
 use crate::types::{AudioFrame, ColorMetadata, DecoderCommand, VideoFrame};
 
 /// Spawn a decoder thread for the given file path.
+///
+/// `ritmo_externo`: Tauri — decode por delante; `ancho_max_salida`: escala en swscale (p. ej. 1280).
 pub fn spawn_decoder(
     path: &str,
+    ritmo_externo: bool,
+    ancho_max_salida: Option<u32>,
 ) -> Result<(
     Sender<DecoderCommand>,
     Receiver<VideoFrame>,
@@ -38,13 +43,15 @@ pub fn spawn_decoder(
     let meta = extract_metadata(&path_owned)?;
 
     let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded::<DecoderCommand>();
-    let (frame_tx, frame_rx) = crossbeam_channel::bounded::<VideoFrame>(8);
+    let (frame_tx, frame_rx) = crossbeam_channel::bounded::<VideoFrame>(48);
     let (audio_tx, audio_rx) = crossbeam_channel::bounded::<AudioFrame>(32);
 
     std::thread::Builder::new()
         .name(format!("decoder:{}", &path_owned))
         .spawn(move || {
-            if let Err(e) = decoder_loop(&path_owned, cmd_rx, frame_tx, audio_tx) {
+            if let Err(e) =
+                decoder_loop(&path_owned, cmd_rx, frame_tx, audio_tx, ritmo_externo, ancho_max_salida)
+            {
                 log::error!("Decoder thread error: {e:#}");
             }
         })?;
@@ -263,6 +270,9 @@ struct DecoderCtx {
     time_base: ffi::AVRational,
     width: u32,
     height: u32,
+    /// Dimensiones tras escala de reproducción (≤ origen).
+    out_width: u32,
+    out_height: u32,
     fps: f64,
 
     audio_stream_idx: i32,
@@ -297,7 +307,17 @@ impl Drop for DecoderCtx {
     }
 }
 
-fn open_decoder(path: &str) -> Result<DecoderCtx> {
+fn calcular_salida_escala(ancho: u32, alto: u32, ancho_max: Option<u32>) -> (u32, u32) {
+    if let Some(max_w) = ancho_max {
+        if ancho > max_w {
+            let out_h = ((alto as u64 * max_w as u64) / ancho as u64).max(2) as u32;
+            return (max_w, out_h);
+        }
+    }
+    (ancho, alto)
+}
+
+fn open_decoder(path: &str, ancho_max_salida: Option<u32>) -> Result<DecoderCtx> {
     let c_path = CString::new(path)?;
     unsafe {
         let mut fmt_ctx: *mut ffi::AVFormatContext = ptr::null_mut();
@@ -349,7 +369,14 @@ fn open_decoder(path: &str) -> Result<DecoderCtx> {
 
         let width = (*codec_ctx).width as u32;
         let height = (*codec_ctx).height as u32;
+        let (out_width, out_height) = calcular_salida_escala(width, height, ancho_max_salida);
         let src_fmt = (*codec_ctx).pix_fmt;
+
+        if out_width != width {
+            log::info!(
+                "Decoder escala reproducción: {width}×{height} → {out_width}×{out_height}"
+            );
+        }
 
         let fps = if stream.avg_frame_rate.den != 0 {
             stream.avg_frame_rate.num as f64 / stream.avg_frame_rate.den as f64
@@ -361,10 +388,10 @@ fn open_decoder(path: &str) -> Result<DecoderCtx> {
             width as i32,
             height as i32,
             src_fmt,
-            width as i32,
-            height as i32,
+            out_width as i32,
+            out_height as i32,
             ffi::AVPixelFormat::AV_PIX_FMT_RGBA,
-            SWS_FAST_BILINEAR,
+            SWS_ESCALA,
             ptr::null_mut(),
             ptr::null_mut(),
             ptr::null(),
@@ -380,8 +407,8 @@ fn open_decoder(path: &str) -> Result<DecoderCtx> {
             ffi::avformat_close_input(&mut fmt_ctx);
             return Err(anyhow!("av_frame_alloc (rgba scratch)"));
         }
-        (*rgba_scratch).width = width as i32;
-        (*rgba_scratch).height = height as i32;
+        (*rgba_scratch).width = out_width as i32;
+        (*rgba_scratch).height = out_height as i32;
         (*rgba_scratch).format = ffi::AVPixelFormat::AV_PIX_FMT_RGBA as i32;
         let buf_ret = ffi::av_frame_get_buffer(rgba_scratch, 0);
         if buf_ret < 0 {
@@ -453,6 +480,8 @@ fn open_decoder(path: &str) -> Result<DecoderCtx> {
             time_base,
             width,
             height,
+            out_width,
+            out_height,
             fps,
             audio_stream_idx,
             audio_codec_ctx,
@@ -467,12 +496,16 @@ fn decoder_loop(
     cmd_rx: Receiver<DecoderCommand>,
     frame_tx: Sender<VideoFrame>,
     audio_tx: Sender<AudioFrame>,
+    ritmo_externo: bool,
+    ancho_max_salida: Option<u32>,
 ) -> Result<()> {
-    let mut ctx = open_decoder(path)?;
+    let mut ctx = open_decoder(path, ancho_max_salida)?;
     log::info!(
-        "Decoder open: '{path}' {}×{} @ {:.2}fps",
+        "Decoder open: '{path}' {}×{} → {}×{} @ {:.2}fps",
         ctx.width,
         ctx.height,
+        ctx.out_width,
+        ctx.out_height,
         ctx.fps
     );
 
@@ -617,10 +650,12 @@ fn decoder_loop(
                             log::warn!("Decoder thread exiting: UI frame channel disconnected");
                             return Ok(());
                         }
-                        // Throttle: in play mode, don't decode faster than real time
-                        if is_playing && ctx.fps > 0.0 {
+                        // ritmo_externo: Tauri decodifica a tope (backpressure vía canal bounded).
+                        // egui v1: sleep 1/fps para alinear decode con wall clock local.
+                        if !ritmo_externo && is_playing && ctx.fps > 0.0 {
                             let frame_secs = 1.0 / ctx.fps;
-                            let sleep_dur = Duration::from_secs_f64(frame_secs).max(Duration::from_millis(1));
+                            let sleep_dur =
+                                Duration::from_secs_f64(frame_secs).max(Duration::from_millis(1));
                             std::thread::sleep(sleep_dur);
                         }
                     }
@@ -848,8 +883,8 @@ unsafe fn convert_frame(
     frame: *mut ffi::AVFrame,
     pts_raw: i64,
 ) -> Result<VideoFrame> {
-    let w = ctx.width;
-    let h = ctx.height;
+    let w = ctx.out_width;
+    let h = ctx.out_height;
     let pts = pts_to_secs(pts_raw, ctx.time_base);
 
     let dst_frame = ctx.rgba_scratch;
@@ -869,24 +904,28 @@ unsafe fn convert_frame(
         src_data.as_ptr(),
         (*frame).linesize.as_ptr(),
         0,
-        h as i32,
+        ctx.height as i32,
         (*dst_frame).data.as_mut_ptr(),
         (*dst_frame).linesize.as_mut_ptr(),
     );
 
     let stride = (*dst_frame).linesize[0] as usize;
-    let pixel_bytes = 4;
-    let mut rgba_data = Vec::with_capacity((w * h) as usize * pixel_bytes);
+    let bytes_por_fila = w as usize * 4;
+    let total = bytes_por_fila * h as usize;
     let src_ptr = (*dst_frame).data[0];
-    for row in 0..h as usize {
-        let row_start = src_ptr.add(row * stride);
-        let row_slice = std::slice::from_raw_parts(row_start, w as usize * pixel_bytes);
-        rgba_data.extend_from_slice(row_slice);
+    let mut rgba_data = Vec::with_capacity(total);
+    if stride == bytes_por_fila {
+        rgba_data.extend_from_slice(std::slice::from_raw_parts(src_ptr, total));
+    } else {
+        for row in 0..h as usize {
+            let row_start = src_ptr.add(row * stride);
+            rgba_data.extend_from_slice(std::slice::from_raw_parts(row_start, bytes_por_fila));
+        }
     }
 
     Ok(VideoFrame {
         pts,
-        rgba_data,
+        rgba_data: Arc::new(rgba_data),
         width: w,
         height: h,
     })

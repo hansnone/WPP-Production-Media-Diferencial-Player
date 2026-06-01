@@ -1,5 +1,7 @@
 //! Tipos compartidos entre UI, decoders y renderer: frames, comandos y re-exports de `core`.
 
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 
 pub use diffplayerqc_core::{CompareMode, DiffMode, PlaybackState};
@@ -9,8 +11,8 @@ pub use diffplayerqc_core::{CompareMode, DiffMode, PlaybackState};
 pub struct VideoFrame {
     /// Presentation timestamp in seconds.
     pub pts: f64,
-    /// Raw RGBA bytes, row-major, no padding.
-    pub rgba_data: Vec<u8>,
+    /// Raw RGBA bytes, row-major, no padding (compartido vía Arc para evitar clones en caliente).
+    pub rgba_data: Arc<Vec<u8>>,
     pub width: u32,
     pub height: u32,
 }

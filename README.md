@@ -52,27 +52,54 @@ WPP Production Media Diferencial Player es un reproductor avanzado multiplatafor
 - **Portabilidad Total:** El sistema de auto-empaquetado distribuye el programa sin requerir dependencias externas del sistema (los binarios de FFmpeg se integran con la aplicación).
 - **Instaladores Nativos:** Empaquetado en un archivo portátil limpio para Windows y distribuido en formato `.pkg` fácil de instalar para macOS.
 
+## DiffPlayerQC v2 (Tauri + Svelte)
+
+Interfaz nueva para QC diferencial (hitos M0–M7). Especificación: [`docs/SPEC_V2.md`](docs/SPEC_V2.md).
+
+### Desarrollo
+
+```bash
+# Requisitos: Rust, Node 22+, pnpm 9+, FFmpeg
+pnpm install --dir frontend
+cargo tauri dev
+```
+
+### Release local (macOS)
+
+```bash
+pnpm build
+cargo tauri build --profile release-small
+```
+
+Artefactos en `src-tauri/target/release-small/bundle/`. Publicación CI: etiqueta `git tag v2.0.0 && git push origin v2.0.0` — ver [`docs/RELEASE.md`](docs/RELEASE.md).
+
+### v1 (egui, legacy)
+
+```bash
+cargo build --release -p diffplayerqc --features egui-app
+```
+
 ## Instalación
 
-### Binarios Precompilados
-Descarga la última versión desde la [página de releases](https://github.com/tu-usuario/diffplayerqc/releases).
+### Binarios precompilados
 
-- **Windows:** Archivo `.zip` portátil.
-- **macOS:** Instalador `.pkg`.
-- **Linux:** Archivo `.tar.gz` con binario.
+Descarga la última versión desde [GitHub Releases](https://github.com/hansnone/diffplayerqc/releases) (v2: `.dmg` / `.app` en macOS).
 
-### Construcción desde Fuente
+- **macOS (v2):** `.dmg` (Apple Silicon o Intel).
+- **Windows / Linux (v2):** bundle Tauri según plataforma.
+- **v1 legacy:** `.pkg` / `.zip` según release anterior.
+
+### Construcción desde fuente (v1 egui)
+
 Requiere Rust 1.70+ y FFmpeg instalado en el sistema.
 
 ```bash
-git clone https://github.com/tu-usuario/diffplayerqc.git
+git clone https://github.com/hansnone/diffplayerqc.git
 cd diffplayerqc
-cargo build --release
-# Binario más pequeño (menos rápido en CPU): ver docs/BUILD_PROFILES.md
-# cargo build --profile release-small
+cargo build --release -p diffplayerqc --features egui-app
 ```
 
-Para Windows, usa `build.ps1` o `build.sh` para scripts de construcción automatizados.
+Para Windows, usa `build.ps1` o `build.sh` si están disponibles en tu rama.
 
 ## Uso
 

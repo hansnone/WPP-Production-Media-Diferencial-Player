@@ -1,0 +1,131 @@
+# Publica artefactos en GitHub Releases al etiquetar v* (M7).
+# Firmado macOS opcional: ver docs/RELEASE.md (secrets APPLE_*).
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  # Perfil pequeño para cumplir objetivo < 25 MB en macOS (ver Cargo.toml workspace).
+  TAURI_BUILD_PROFILE: release-small
+
+jobs:
+  verificar-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validar formato de versión
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          echo "Tag: $TAG"
+          case "$TAG" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "El tag debe ser vMAJOR.MINOR.PATCH (ej. v2.0.0)"; exit 1 ;;
+          esac
+
+  build-tauri:
+    needs: verificar-tag
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            args: "--target aarch64-apple-darwin"
+          - platform: macos-latest
+            args: "--target x86_64-apple-darwin"
+          - platform: ubuntu-22.04
+            args: ""
+          - platform: windows-latest
+            args: ""
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar dependencias Linux
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config \
+            libavcodec-dev libavformat-dev libavutil-dev \
+            libswscale-dev libswresample-dev \
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Instalar FFmpeg (macOS)
+        if: matrix.platform == 'macos-latest'
+        run: brew install ffmpeg
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - run: pnpm install --dir frontend
+      - run: pnpm build
+
+      - name: Importar certificado Apple (opcional)
+        if: matrix.platform == 'macos-latest' && env.APPLE_CERTIFICATE != ''
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
+          security create-keychain -p "${{ secrets.KEYCHAIN_PASSWORD }}" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "${{ secrets.KEYCHAIN_PASSWORD }}" build.keychain
+          security import certificate.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "${{ secrets.KEYCHAIN_PASSWORD }}" build.keychain
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        with:
+          projectPath: src-tauri
+          tagName: ${{ github.ref_name }}
+          releaseName: DiffPlayerQC ${{ github.ref_name }}
+          releaseBody: |
+            Build automático desde `${{ github.sha }}`.
+
+            Ver [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md).
+
+            ### macOS
+            - `.dmg` / `.app` (Apple Silicon o Intel según el artefacto).
+            ### Linux / Windows
+            - Instalador o bundle según plataforma.
+
+            **Nota:** sin secrets `APPLE_*` el binario macOS no estará firmado (válido para pruebas internas).
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }} --profile ${{ env.TAURI_BUILD_PROFILE }}
+
+      - name: Comprobar tamaño DMG macOS (objetivo M7 menor de 25 MB)
+        if: matrix.platform == 'macos-latest' && matrix.args == '--target aarch64-apple-darwin'
+        run: |
+          DMG=$(find src-tauri/target -name '*.dmg' 2>/dev/null | head -1)
+          if [ -z "$DMG" ]; then
+            echo "No se encontró .dmg; omitiendo comprobación de tamaño."
+            exit 0
+          fi
+          MB=$(du -m "$DMG" | cut -f1)
+          echo "Tamaño DMG: ${MB} MB"
+          if [ "$MB" -gt 25 ]; then
+            echo "::warning::DMG supera 25 MB (${MB} MB). Revisar docs/RELEASE.md (perfil release-small, sin egui)."
+          fi

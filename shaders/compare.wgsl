@@ -14,9 +14,8 @@ struct Uniforms {
     pan_v:            f32,
     scale_u:          f32,
     scale_v:          f32,
-    bg_r:             f32,
-    bg_g:             f32,
-    bg_b:             f32,
+    scale_u_b:        f32,
+    scale_v_b:        f32,
     split_horizontal: u32,
 }
 
@@ -58,18 +57,22 @@ fn vs_main(@builtin(vertex_index) vert_idx: u32) -> VertexOut {
 //  Fragment stage — the comparison logic
 // ---------------------------------------------------------------------------
 
-/// Apply zoom and pan to a raw UV coordinate.
-fn zoom_pan_uv(raw_uv: vec2<f32>) -> vec2<f32> {
-    // Zoom around centre (0.5, 0.5)
+/// UV 0..1 del panel → sample con letterbox propio del canal.
+fn zoom_pan_uv_escalado(raw_uv: vec2<f32>, su: f32, sv: f32) -> vec2<f32> {
     var centred = raw_uv - vec2(0.5, 0.5);
-    
-    // Apply aspect ratio scale (letterboxing)
-    centred.x = centred.x * u.scale_u;
-    centred.y = centred.y * u.scale_v;
-    
-    let zoomed  = centred / u.zoom;
-    // Apply pan offset (pan_u, pan_v are in UV space)
+    centred.x = centred.x * su;
+    centred.y = centred.y * sv;
+    let zoomed = centred / u.zoom;
     return zoomed + vec2(0.5 + u.pan_u, 0.5 + u.pan_v);
+}
+
+/// UV compartido: A y B con el mismo encuadre (modo cortina / diff / heatmap).
+fn uv_video_compartido(screen_uv: vec2<f32>) -> vec2<f32> {
+    return zoom_pan_uv_escalado(screen_uv, u.scale_u, u.scale_v);
+}
+
+fn borde_uv(uv: vec2<f32>) -> f32 {
+    return step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0);
 }
 
 /// Map a scalar intensity (0–1) to heatmap color.
@@ -106,84 +109,76 @@ fn compute_difference(col_a: vec3<f32>, col_b: vec3<f32>) -> vec3<f32> {
 
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
-    // Transform UV with zoom/pan
-    let uv = zoom_pan_uv(in.uv);
-
-    // If UV is out of [0,1] range due to pan, show a dark border
-    let border = step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0);
-
-    let col_a = textureSample(tex_a, samp, uv);
-    let col_b = textureSample(tex_b, samp, uv);
-
-    var out_color: vec4<f32>;
+    let screen_uv = in.uv;
 
     let line_half_w = 0.0015;
-    // Curtain orientation: 0 = vertical (split on X), 1 = horizontal (split on Y)
-    let on_left = select(in.uv.x < u.split_pos, in.uv.y < u.split_pos, u.split_horizontal == 1u);
+    let on_left = select(screen_uv.x < u.split_pos, screen_uv.y < u.split_pos, u.split_horizontal == 1u);
     let in_line = select(
-        abs(in.uv.x - u.split_pos) < line_half_w,
-        abs(in.uv.y - u.split_pos) < line_half_w,
+        abs(screen_uv.x - u.split_pos) < line_half_w,
+        abs(screen_uv.y - u.split_pos) < line_half_w,
         u.split_horizontal == 1u
     );
 
-    if u.mode == 0u {
-        // ── 0: Split-Screen (curtain) ──────────────────────────────────────
-        let base = select(col_b, col_a, on_left);
-        out_color = select(base, vec4(1.0, 1.0, 0.0, 1.0), in_line);
-    } else if u.mode == 1u {
-        // ── 1: Absolute Difference ─────────────────────────────────────────
-        let diff = compute_difference(col_a.rgb, col_b.rgb);
-        let base = select(vec4(diff, 1.0), col_a, on_left);
-        out_color = select(base, vec4(1.0, 1.0, 0.0, 1.0), in_line);
-    } else if u.mode == 2u {
-        // ── 2: Heatmap QC ──────────────────────────────────────────────────
-        let diff_vec = abs(col_a.rgb - col_b.rgb);
-        // Perceptual luminance weight
-        let intensity = dot(diff_vec, vec3(0.2126, 0.7152, 0.0722)) * u.amplifier;
-        let heat      = heatmap_color(intensity);
-        let base = select(vec4(heat, 1.0), col_a, on_left);
-        out_color = select(base, vec4(1.0, 1.0, 0.0, 1.0), in_line);
-    } else {
-        // ── 3: Side-by-Side ────────────────────────────────────────────────
-        // Left half shows tex_a scaled to hit 0..1 in x
-        // Right half shows tex_b scaled to hit 0..1 in x
-        let is_left_half = in.uv.x < 0.5;
-        
-        var sbs_uv = in.uv;
-        if is_left_half {
-            sbs_uv.x = sbs_uv.x * 2.0;
+    // ── Side-by-Side: dos paneles independientes ───────────────────────────
+    if u.mode == 3u {
+        let is_left = screen_uv.x < 0.5;
+        let local = select(
+            vec2(screen_uv.x * 2.0, screen_uv.y),
+            vec2((screen_uv.x - 0.5) * 2.0, screen_uv.y),
+            is_left,
+        );
+        let col_a = textureSample(
+            tex_a,
+            samp,
+            zoom_pan_uv_escalado(local, u.scale_u, u.scale_v),
+        );
+        let col_b = textureSample(
+            tex_b,
+            samp,
+            zoom_pan_uv_escalado(local, u.scale_u_b, u.scale_v_b),
+        );
+        let border = borde_uv(local);
+
+        var panel: vec4<f32>;
+        if is_left {
+            panel = vec4(col_a.rgb * border, 1.0);
+        } else if u.diff_mode == 4u {
+            panel = vec4(col_b.rgb * border, 1.0);
         } else {
-            sbs_uv.x = (sbs_uv.x - 0.5) * 2.0;
+            let diff = compute_difference(col_a.rgb, col_b.rgb);
+            panel = vec4(diff * border, 1.0);
         }
-        
-        sbs_uv = zoom_pan_uv(sbs_uv);
-        
-        let sbs_col_a = textureSample(tex_a, samp, sbs_uv);
-        let sbs_col_b = textureSample(tex_b, samp, sbs_uv);
-        
-        var right_side: vec4<f32>;
-        if u.diff_mode == 4u {
-            right_side = sbs_col_b;
-        } else {
-            right_side = vec4(compute_difference(sbs_col_a.rgb, sbs_col_b.rgb), 1.0);
-        }
-        
-        let base = select(right_side, sbs_col_a, is_left_half);
-        
-        // Draw a line down the middle
+
         let center_line_w = 0.0015;
-        let is_center = abs(in.uv.x - 0.5) < center_line_w;
-        out_color = select(base, vec4(1.0, 1.0, 0.0, 1.0), is_center);
-        
-        // Disable outer border clipping for side-by-side mode 
-        // because we manually handle the UV scaling and we don't want the 0.5 split clipping it.
-        // Instead, we just check if the transformed sbs_uv is out of bounds [0, 1].
-        let sbs_border = step(0.0, sbs_uv.x) * step(sbs_uv.x, 1.0) * step(0.0, sbs_uv.y) * step(sbs_uv.y, 1.0);
-        let bg = vec3(u.bg_r, u.bg_g, u.bg_b);
-        return vec4(mix(bg, out_color.rgb, sbs_border), 1.0);
+        let is_center = abs(screen_uv.x - 0.5) < center_line_w;
+        return select(panel, vec4(1.0, 1.0, 0.0, 1.0), is_center);
     }
 
-    // Mix with background color (out of video UV range)
-    let bg = vec3(u.bg_r, u.bg_g, u.bg_b);
-    return vec4(mix(bg, out_color.rgb, border), 1.0);
+    // ── Cortina / diff / heatmap: un solo plano, línea divide A | B ────────
+    let uv_vid = uv_video_compartido(screen_uv);
+    let col_a = textureSample(tex_a, samp, uv_vid);
+    let col_b = textureSample(tex_b, samp, uv_vid);
+    let border = borde_uv(uv_vid);
+
+    var out_color: vec4<f32>;
+
+    if u.mode == 0u {
+        let base = select(col_b, col_a, on_left);
+        out_color = vec4(base.rgb * border, 1.0);
+    } else if u.mode == 1u {
+        let diff = compute_difference(col_a.rgb, col_b.rgb);
+        let base = select(vec4(diff, 1.0), col_a, on_left);
+        out_color = vec4(base.rgb * border, 1.0);
+    } else {
+        let diff_vec = abs(col_a.rgb - col_b.rgb);
+        let intensity = dot(diff_vec, vec3(0.2126, 0.7152, 0.0722)) * u.amplifier;
+        let heat = heatmap_color(intensity);
+        let base = select(vec4(heat, 1.0), col_a, on_left);
+        out_color = vec4(base.rgb * border, 1.0);
+    }
+
+    if (in_line) {
+        return vec4(1.0, 1.0, 0.0, 1.0);
+    }
+    return out_color;
 }

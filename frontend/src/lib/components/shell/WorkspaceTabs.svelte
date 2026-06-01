@@ -1,18 +1,20 @@
 <script lang="ts">
+  import { idiomaStore } from "../../i18n/idioma.svelte";
+  import type { ClaveTraduccion } from "../../i18n/traducciones";
   import { layoutStore, type WorkspaceId } from "../../stores/layout.svelte";
   import { AudioLines, Clapperboard, FileOutput, FileText, ScanSearch } from "@lucide/svelte";
 
   const pestanas: {
     id: WorkspaceId;
-    etiqueta: string;
+    clave: ClaveTraduccion;
     atajo: string;
     icon: typeof Clapperboard;
   }[] = [
-    { id: "compare", etiqueta: "Compare", atajo: "1", icon: Clapperboard },
-    { id: "inspect", etiqueta: "Inspect", atajo: "2", icon: ScanSearch },
-    { id: "audio", etiqueta: "Audio", atajo: "3", icon: AudioLines },
-    { id: "report", etiqueta: "Report", atajo: "4", icon: FileText },
-    { id: "export", etiqueta: "Export", atajo: "5", icon: FileOutput },
+    { id: "compare", clave: "workspace.compare", atajo: "1", icon: Clapperboard },
+    { id: "inspect", clave: "workspace.inspect", atajo: "2", icon: ScanSearch },
+    { id: "audio", clave: "workspace.audio", atajo: "3", icon: AudioLines },
+    { id: "report", clave: "workspace.report", atajo: "4", icon: FileText },
+    { id: "export", clave: "workspace.export", atajo: "5", icon: FileOutput },
   ];
 </script>
 
@@ -27,7 +29,7 @@
       title="Shift+{p.atajo}"
     >
       <p.icon size={18} strokeWidth={1.5} />
-      <span>{p.etiqueta}</span>
+      <span>{idiomaStore.t(p.clave)}</span>
     </button>
   {/each}
 </nav>
