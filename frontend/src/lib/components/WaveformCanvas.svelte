@@ -13,6 +13,8 @@
     testId?: string;
     /** Si true, no emite seek al hacer click (p. ej. franja diff). */
     soloLectura?: boolean;
+    /** LUFS momentáneo por bucket (-70..0) para franja inferior (M9). */
+    lufsBuckets?: number[];
   }
 
   let {
@@ -22,6 +24,7 @@
     etiqueta,
     testId = "waveform-canvas",
     soloLectura = false,
+    lufsBuckets = [],
   }: Props = $props();
 
   let canvas: HTMLCanvasElement | undefined = $state();
@@ -82,6 +85,33 @@
       ctx.fillRect(x, midY - amp, 1, amp * 2);
     }
 
+    // Franja inferior: loudness momentáneo por bucket (EBU, -70..0 LUFS → altura)
+    if (lufsBuckets.length) {
+      const bandH = Math.max(8, Math.floor(h * 0.18));
+      const y0 = h - bandH;
+      const nLufs = lufsBuckets.length;
+      ctx.fillStyle = "rgba(0,0,0,0.35)";
+      ctx.fillRect(0, y0, w, bandH);
+      for (let x = 0; x < w; x += 1) {
+        const idx = Math.min(nLufs - 1, Math.floor((x / w) * nLufs));
+        const lufs = lufsBuckets[idx] ?? -70;
+        const norm = Math.max(0, Math.min(1, (lufs + 70) / 70));
+        const barH = norm * (bandH - 2);
+        ctx.fillStyle = `rgba(120, 180, 255, ${0.25 + norm * 0.55})`;
+        ctx.fillRect(x, y0 + bandH - barH, 1, barH);
+      }
+      // Referencia -23 LUFS (broadcast)
+      const refNorm = (-23 + 70) / 70;
+      const refY = y0 + bandH - refNorm * (bandH - 2);
+      ctx.strokeStyle = "rgba(255, 200, 80, 0.55)";
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      ctx.moveTo(0, refY);
+      ctx.lineTo(w, refY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
     if (duracion > 0) {
       const px = (ptsActual / duracion) * w;
       ctx.strokeStyle = resolverColor("var(--accent)");
@@ -95,6 +125,7 @@
 
   $effect(() => {
     picos;
+    lufsBuckets;
     ptsActual;
     duracion;
     pintar();

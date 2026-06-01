@@ -67,6 +67,8 @@ pub struct ColorMetadata {
     pub major_brand: String,
     pub video_stream_metadata: String,
     pub audio_stream_metadata: String,
+    /// `hw:…` (p. ej. `hw:videotoolbox`) o `software` (M11).
+    pub decode_ruta: String,
 }
 
 /// Safe zone overlay mode: none, TV (EBU R95), or social/mobile (9:16).

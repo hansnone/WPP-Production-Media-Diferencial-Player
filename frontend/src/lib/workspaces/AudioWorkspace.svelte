@@ -2,7 +2,9 @@
   import WaveformCanvas from "../components/WaveformCanvas.svelte";
   import {
     calcularPicosDiff,
+    formatearDb,
     formatearLufs,
+    type DatosEbuR128,
   } from "../formaOnda";
   import { formaOndaStore } from "../stores/formaOnda.svelte";
   import { idiomaStore } from "../i18n/idioma.svelte";
@@ -39,6 +41,30 @@
     const signo = d >= 0 ? "+" : "";
     return `${signo}${d.toFixed(1)} dB`;
   });
+
+  const ebuA = $derived(formaOndaStore.formaA?.ebu ?? null);
+  const ebuB = $derived(formaOndaStore.formaB?.ebu ?? null);
+
+  function filaEbu(ebu: DatosEbuR128 | null, canal: "a" | "b") {
+    if (!ebu) {
+      return null;
+    }
+    return {
+      canal,
+      tp: formatearDb(ebu.true_peak_dbtp, "dBTP"),
+      lra: formatearDb(ebu.lra, "LU"),
+      ok: ebu.dentro_spec_ebu,
+      alertas: ebu.alertas,
+      silencio: ebu.silencio_detectado,
+      clip: ebu.clipping_detectado > 0.001,
+    };
+  }
+
+  const filasEbu = $derived(
+    [filaEbu(ebuA, "a"), filaEbu(ebuB, "b")].filter(
+      (f): f is NonNullable<ReturnType<typeof filaEbu>> => f !== null,
+    ),
+  );
 </script>
 
 <div class="audio-ws" data-testid="workspace-audio">
@@ -64,6 +90,52 @@
     </div>
   </header>
 
+  {#if filasEbu.length}
+    <section class="audio-ws__ebu" data-testid="audio-ebu-panel">
+      <h3 class="ebu-titulo">{idiomaStore.t("audio.ebu.titulo")}</h3>
+      <div class="ebu-grid">
+        {#each filasEbu as fila (fila.canal)}
+          <article
+            class="ebu-card"
+            class:ebu-card--ok={fila.ok}
+            class:ebu-card--fail={!fila.ok}
+            data-testid="ebu-card-{fila.canal}"
+          >
+            <header class="ebu-card__head">
+              <span class="ebu-canal">{fila.canal.toUpperCase()}</span>
+              <span class="ebu-spec">
+                {fila.ok ? idiomaStore.t("audio.ebu.specOk") : idiomaStore.t("audio.ebu.specFail")}
+              </span>
+            </header>
+            <dl class="ebu-metrics">
+              <div>
+                <dt>{idiomaStore.t("audio.ebu.truePeak")}</dt>
+                <dd class="mono">{fila.tp}</dd>
+              </div>
+              <div>
+                <dt>{idiomaStore.t("audio.ebu.lra")}</dt>
+                <dd class="mono">{fila.lra}</dd>
+              </div>
+            </dl>
+            {#if fila.silencio}
+              <p class="ebu-aviso">{idiomaStore.t("audio.ebu.silencio")}</p>
+            {/if}
+            {#if fila.clip}
+              <p class="ebu-aviso ebu-aviso--clip">{idiomaStore.t("audio.ebu.clipping")}</p>
+            {/if}
+            {#if fila.alertas.length}
+              <ul class="ebu-alertas" data-testid="ebu-alertas-{fila.canal}">
+                {#each fila.alertas as msg}
+                  <li>{msg}</li>
+                {/each}
+              </ul>
+            {/if}
+          </article>
+        {/each}
+      </div>
+    </section>
+  {/if}
+
   <div class="wave wave--a" data-testid="waveform-strip-a">
     {#if formaOndaStore.escaneandoA}
       <p class="wave__estado">{idiomaStore.t("audio.escaneandoA")}</p>
@@ -71,6 +143,7 @@
       <WaveformCanvas
         picos={formaOndaStore.formaA?.picos ?? []}
         duracionSecs={formaOndaStore.formaA?.duracion_secs ?? 0}
+        lufsBuckets={formaOndaStore.formaA?.lufs_buckets ?? []}
         color="var(--chan-a)"
         etiqueta="Canal A"
         testId="waveform-canvas-a"
@@ -85,6 +158,7 @@
       <WaveformCanvas
         picos={formaOndaStore.formaB?.picos ?? []}
         duracionSecs={formaOndaStore.formaB?.duracion_secs ?? 0}
+        lufsBuckets={formaOndaStore.formaB?.lufs_buckets ?? []}
         color="var(--chan-b)"
         etiqueta="Canal B"
         testId="waveform-canvas-b"
@@ -148,6 +222,97 @@
 
   .loudness-item--b .loudness-val {
     color: var(--chan-b);
+  }
+
+  .audio-ws__ebu {
+    padding: 8px 12px;
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-max);
+  }
+
+  .ebu-titulo {
+    margin: 0 0 8px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: var(--letter-label);
+    color: var(--text-muted);
+    font-weight: 600;
+  }
+
+  .ebu-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 8px;
+  }
+
+  .ebu-card {
+    padding: 8px 10px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--bg-darkest);
+  }
+
+  .ebu-card--ok {
+    border-left: 3px solid var(--ok, #4ade80);
+  }
+
+  .ebu-card--fail {
+    border-left: 3px solid var(--warn, #f87171);
+  }
+
+  .ebu-card__head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+  }
+
+  .ebu-canal {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text-primary);
+  }
+
+  .ebu-spec {
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+
+  .ebu-metrics {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px 12px;
+    margin: 0;
+  }
+
+  .ebu-metrics dt {
+    font-size: 9px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+
+  .ebu-metrics dd {
+    margin: 0;
+    font-size: 12px;
+    color: var(--text-primary);
+  }
+
+  .ebu-aviso {
+    margin: 6px 0 0;
+    font-size: 11px;
+    color: var(--warn, #fbbf24);
+  }
+
+  .ebu-aviso--clip {
+    color: var(--warn, #f87171);
+  }
+
+  .ebu-alertas {
+    margin: 6px 0 0;
+    padding-left: 1.1rem;
+    font-size: 11px;
+    color: var(--text-secondary, var(--text-muted));
   }
 
   .wave {

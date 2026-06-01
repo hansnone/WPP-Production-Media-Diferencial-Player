@@ -2,6 +2,18 @@
 
 Formato basado en [Keep a Changelog](https://keepachangelog.com/es/ES/1.0.0/).
 
+## [Unreleased]
+
+### Añadido
+
+- **M8:** métricas objetivas A↔B — `metricas_video.rs`, `vmaf_ffmpeg.rs` (SSIM, MS-SSIM, MSE, PSNR; VMAF opcional); heatmap en timeline; saltos entre caídas SSIM; panel Compare.
+- **M9:** loudness EBU R128 — `analisis_loudness.rs`, integración en `forma_onda.rs`; true peak, LRA, alertas; overlay LUFS en waveforms; panel EBU en workspace Audio.
+- **M10:** eventos QC y notas — `eventos_qc` en core, persistencia JSON, workspace Report, panel Compare, timeline de marcadores, IPC seek/listar/crear.
+- **M11:** decode hardware FFmpeg — `decode_hw.rs`, fallback software, etiquetas `decode_a`/`decode_b` en UI.
+### Planificado
+
+- Roadmap **M12–M16** en [`docs/ROADMAP_M8_M16.md`](docs/ROADMAP_M8_M16.md).
+
 ## [2.0.0] — 2026-05-29
 
 ### Añadido

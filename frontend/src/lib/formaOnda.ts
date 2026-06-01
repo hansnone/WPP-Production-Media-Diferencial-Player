@@ -2,12 +2,26 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { Canal } from "./player";
 
+/** Métricas EBU R128 (M9), alineado con Rust `DatosEbuR128`. */
+export interface DatosEbuR128 {
+  lufs_integrado: number;
+  true_peak_dbtp: number;
+  lra: number;
+  pico_muestra_dbfs: number;
+  silencio_detectado: boolean;
+  clipping_detectado: number;
+  alertas: string[];
+  dentro_spec_ebu: boolean;
+}
+
 /** Forma de onda precomputada (alineada con Rust `FormaOnda`). */
 export interface FormaOnda {
   picos: number[];
   duracion_secs: number;
   lufs_integrado: number;
   picos_por_segundo: number;
+  lufs_buckets?: number[];
+  ebu?: DatosEbuR128 | null;
 }
 
 /** Evento emitido al terminar el escaneo offline. */
@@ -36,6 +50,14 @@ export function formatearLufs(lufs: number): string {
     return "—";
   }
   return `${lufs.toFixed(1)} LUFS`;
+}
+
+/** Formatea dBTP / LRA / dBFS con em dash si no es finito. */
+export function formatearDb(valor: number, unidad: string): string {
+  if (!Number.isFinite(valor)) {
+    return "—";
+  }
+  return `${valor.toFixed(1)} ${unidad}`;
 }
 
 /**

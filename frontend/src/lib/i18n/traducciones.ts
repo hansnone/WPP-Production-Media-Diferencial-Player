@@ -67,6 +67,36 @@ export type ClaveTraduccion =
   | "scopes.monitorLuma"
   | "audio.escaneandoA"
   | "audio.escaneandoB"
+  | "audio.ebu.titulo"
+  | "audio.ebu.truePeak"
+  | "audio.ebu.lra"
+  | "audio.ebu.specOk"
+  | "audio.ebu.specFail"
+  | "audio.ebu.silencio"
+  | "audio.ebu.clipping"
+  | "metricas.titulo"
+  | "metricas.vacio"
+  | "metricas.escaneando"
+  | "metricas.muestras"
+  | "metricas.caidas"
+  | "metricas.actual"
+  | "metricas.grafico"
+  | "metricas.sinVmaf"
+  | "metricas.caidaAnterior"
+  | "metricas.caidaSiguiente"
+  | "eventos.titulo"
+  | "eventos.reportIntro"
+  | "eventos.vacio"
+  | "eventos.marcarPlayhead"
+  | "eventos.placeholderTitulo"
+  | "eventos.placeholderNota"
+  | "eventos.anadirNota"
+  | "eventos.eliminar"
+  | "eventos.tituloDefecto"
+  | "eventos.filtro.todos"
+  | "eventos.filtro.manual"
+  | "eventos.filtro.video"
+  | "eventos.filtro.audio"
   | "placeholder.report"
   | "placeholder.export";
 
@@ -136,6 +166,37 @@ const ES: Record<ClaveTraduccion, string> = {
   "scopes.monitorLuma": "Monitor luma",
   "audio.escaneandoA": "Escaneando audio A…",
   "audio.escaneandoB": "Escaneando audio B…",
+  "audio.ebu.titulo": "EBU R128 (post-escaneo)",
+  "audio.ebu.truePeak": "True peak",
+  "audio.ebu.lra": "LRA",
+  "audio.ebu.specOk": "Dentro de spec",
+  "audio.ebu.specFail": "Fuera de spec",
+  "audio.ebu.silencio": "Silencio prolongado detectado",
+  "audio.ebu.clipping": "Posible clipping en muestras",
+  "metricas.titulo": "Métricas SSIM",
+  "metricas.vacio": "Carga A y B para escanear SSIM/PSNR en segundo plano.",
+  "metricas.escaneando": "Escaneando métricas…",
+  "metricas.muestras": "muestras",
+  "metricas.caidas": "caídas",
+  "metricas.actual": "Fotograma",
+  "metricas.grafico": "Serie temporal SSIM / MS-SSIM / VMAF",
+  "metricas.sinVmaf": "VMAF no disponible (FFmpeg sin libvmaf)",
+  "metricas.caidaAnterior": "← Caída SSIM",
+  "metricas.caidaSiguiente": "Caída SSIM →",
+  "eventos.titulo": "Eventos QC",
+  "eventos.reportIntro":
+    "Registro de hallazgos por fotograma. Los datos se guardan por par de fuentes A/B.",
+  "eventos.vacio": "Sin eventos. Marca el playhead o importa hallazgos en hitos posteriores.",
+  "eventos.marcarPlayhead": "Marcar en playhead",
+  "eventos.placeholderTitulo": "Título del hallazgo…",
+  "eventos.placeholderNota": "Nota en el fotograma actual…",
+  "eventos.anadirNota": "Añadir nota",
+  "eventos.eliminar": "Eliminar evento",
+  "eventos.tituloDefecto": "Hallazgo manual",
+  "eventos.filtro.todos": "Todos",
+  "eventos.filtro.manual": "Manual",
+  "eventos.filtro.video": "Vídeo",
+  "eventos.filtro.audio": "Audio",
   "placeholder.report": "Vista PDF — disponible en hitos posteriores.",
   "placeholder.export": "Formulario de exportación — disponible en hitos posteriores.",
 };
@@ -206,6 +267,37 @@ const EN: Record<ClaveTraduccion, string> = {
   "scopes.monitorLuma": "Luma monitor",
   "audio.escaneandoA": "Scanning audio A…",
   "audio.escaneandoB": "Scanning audio B…",
+  "audio.ebu.titulo": "EBU R128 (post-scan)",
+  "audio.ebu.truePeak": "True peak",
+  "audio.ebu.lra": "LRA",
+  "audio.ebu.specOk": "Within spec",
+  "audio.ebu.specFail": "Out of spec",
+  "audio.ebu.silencio": "Extended silence detected",
+  "audio.ebu.clipping": "Possible sample clipping",
+  "metricas.titulo": "SSIM metrics",
+  "metricas.vacio": "Load A and B to scan SSIM/PSNR in the background.",
+  "metricas.escaneando": "Scanning metrics…",
+  "metricas.muestras": "samples",
+  "metricas.caidas": "drops",
+  "metricas.actual": "Frame",
+  "metricas.grafico": "SSIM / MS-SSIM / VMAF time series",
+  "metricas.sinVmaf": "VMAF unavailable (FFmpeg without libvmaf)",
+  "metricas.caidaAnterior": "← SSIM drop",
+  "metricas.caidaSiguiente": "SSIM drop →",
+  "eventos.titulo": "QC events",
+  "eventos.reportIntro":
+    "Frame-accurate findings log. Data is stored per A/B source pair.",
+  "eventos.vacio": "No events yet. Mark the playhead to add a manual finding.",
+  "eventos.marcarPlayhead": "Mark at playhead",
+  "eventos.placeholderTitulo": "Finding title…",
+  "eventos.placeholderNota": "Note at current frame…",
+  "eventos.anadirNota": "Add note",
+  "eventos.eliminar": "Delete event",
+  "eventos.tituloDefecto": "Manual finding",
+  "eventos.filtro.todos": "All",
+  "eventos.filtro.manual": "Manual",
+  "eventos.filtro.video": "Video",
+  "eventos.filtro.audio": "Audio",
   "placeholder.report": "PDF view — coming in a later milestone.",
   "placeholder.export": "Export form — coming in a later milestone.",
 };

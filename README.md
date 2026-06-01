@@ -54,7 +54,14 @@ WPP Production Media Diferencial Player es un reproductor avanzado multiplatafor
 
 ## DiffPlayerQC v2 (Tauri + Svelte)
 
-Interfaz nueva para QC diferencial (hitos M0–M7). Especificación: [`docs/SPEC_V2.md`](docs/SPEC_V2.md).
+Interfaz nueva para QC diferencial (hitos **M0–M7** entregados en v2.0.0).
+
+- Especificación: [`docs/SPEC_V2.md`](docs/SPEC_V2.md)
+- Roadmap siguiente (**M12–M16**): [`docs/ROADMAP_M8_M16.md`](docs/ROADMAP_M8_M16.md)
+- **M8 métricas:** SSIM / MS-SSIM / PSNR en panel Compare; VMAF si `ffmpeg` tiene `libvmaf`; heatmap bajo la barra de transporte.
+- **M9 loudness:** LUFS integrado EBU R128, true peak, LRA y alertas en workspace Audio; ver [`docs/LOUDNESS_M9.md`](docs/LOUDNESS_M9.md).
+- **M10 eventos:** registro de hallazgos QC por PTS, notas, filtros y seek desde lista/timeline; ver [`docs/EVENTOS_M10.md`](docs/EVENTOS_M10.md).
+- **M11 decode HW:** VideoToolbox / VAAPI / D3D11 con fallback a software; ver [`docs/HW_DECODE_M11.md`](docs/HW_DECODE_M11.md).
 
 ### Desarrollo
 

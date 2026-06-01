@@ -1,7 +1,14 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+  import { layoutStore } from "../../stores/layout.svelte";
   import { ocultarViewport, rectViewportDesdeElemento, sincronizarViewport } from "../../viewport";
+
+  /** Workspaces que comparten la ventana overlay wgpu sobre `#canvas-slot`. */
+  function workspaceConVideo(): boolean {
+    const ws = layoutStore.workspaceActivo;
+    return ws === "compare" || ws === "inspect";
+  }
 
   interface Props {
     activo?: boolean;
@@ -63,13 +70,21 @@
       window.removeEventListener("diffplayerqc-sync-viewport", alCargarVideo);
       desuscribirMovida?.();
       desuscribirEscala?.();
-      if ("__TAURI_INTERNALS__" in window) void ocultarViewport();
+      // No ocultar al cambiar Compare ↔ Inspect (el otro workspace re-sincroniza el rect).
+      if ("__TAURI_INTERNALS__" in window && !workspaceConVideo()) {
+        void ocultarViewport();
+      }
     };
   });
 
   $effect(() => {
-    if (activo) programarSync();
-    else if ("__TAURI_INTERNALS__" in window) void ocultarViewport();
+    if (activo) {
+      programarSync();
+      // Tras cambio de workspace o layout, el slot puede medir 0 en el primer frame.
+      requestAnimationFrame(() => programarSync());
+    } else if ("__TAURI_INTERNALS__" in window && !workspaceConVideo()) {
+      void ocultarViewport();
+    }
   });
 </script>
 

@@ -11,7 +11,8 @@ Documento de implementación para agente de programación. Los mockups de refere
 - Las secciones marcadas **[MUST]** son requisitos no negociables.
 - Las marcadas **[SHOULD]** son fuertemente recomendadas.
 - Las marcadas **[MAY]** son opcionales.
-- Cada hito (**M0–M7**) tiene criterios de aceptación: no se avanza al siguiente hasta que todos pasan.
+- Cada hito (**M0–M7**, completados en v2.0.0) tiene criterios de aceptación obligatorios en su fase.
+- Los hitos **M8–M16** (post-release) están en [`docs/ROADMAP_M8_M16.md`](ROADMAP_M8_M16.md).
 - Los mockups visuales tienen precedencia sobre descripciones textuales cuando haya conflicto.
 
 ## 1. Visión y objetivos
@@ -175,6 +176,33 @@ Builds firmados; bundle macOS < 25 MB; CI release en GitHub Releases.
 - [x] CI avisa si DMG arm64 > 25 MB.
 
 **Rama:** `m7/release`
+
+---
+
+## 16. Roadmap post-release M8–M16 [SHOULD]
+
+Tras v2.0.0. Detalle completo, dependencias y estimaciones: **[`docs/ROADMAP_M8_M16.md`](ROADMAP_M8_M16.md)**.
+
+| Bloque | Hitos | Foco |
+|--------|-------|------|
+| A | M8, M9, M10 | Métricas VMAF/SSIM, loudness EBU R128, eventos y notas QC |
+| B | M11, M12 | Decode HW, ProRes/DNxHR 10–12 bit |
+| C | M13, M14, M15 | Timecode SMPTE, modo Difference QC, reportes PDF/HTML |
+| D | M16 | Atajos personalizables, multi-ventana |
+
+**Resumen de aceptación por hito (extracto):**
+
+- **M8:** [x] gráfico SSIM/MS-SSIM/VMAF + heatmap timeline + export JSON/CSV; escaneo en background; VMAF si `ffmpeg` incluye libvmaf.
+- **M9:** [x] LUFS integrado EBU, true peak, LRA, `lufs_buckets` en waveform, alertas silencio/clipping; panel Audio post-escaneo.
+- **M10:** [x] tabla eventos + notas persistentes + seek desde evento + marcadores en timeline.
+- **M11:** [x] decode HW (VideoToolbox/VAAPI/D3D11…) con fallback software; etiqueta en Fuentes; `DIFFPLAYERQC_HW_DECODE=0`.
+- **M12:** ProRes/DNxHR frame-accurate; color Rec.709/2020 correcto.
+- **M13:** display y salto SMPTE NDF/DF.
+- **M14:** difference shader con umbral; toggles de vista.
+- **M15:** reporte PDF/HTML con snapshots y métricas.
+- **M16:** mapa de teclas editable; ventana clean feed.
+
+No se exige completar M8–M16 para etiquetar parches `2.x`; cada hito es un incremento versionable (`2.1.0` = M8, etc., según acuerdo de release).
 
 ## 24. Checklist agente (M0)
 

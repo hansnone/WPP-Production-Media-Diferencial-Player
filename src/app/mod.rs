@@ -409,7 +409,8 @@ impl DiffPlayerApp {
     /// Load a video from a filesystem path into the given channel, replacing any existing video.
     pub fn open_video_from_path(&mut self, path_str: String, chan: Channel, ctx: &egui::Context) {
         match decoder::spawn_decoder(&path_str, false, None) {
-            Ok((cmd_tx, frame_rx, audio_rx, meta)) => {
+            Ok((cmd_tx, frame_rx, audio_rx, mut meta, hw_rx)) => {
+                meta.decode_ruta = decoder::esperar_etiqueta_decode(hw_rx);
                 let handle = DecoderHandle {
                     cmd_tx,
                     frame_rx,

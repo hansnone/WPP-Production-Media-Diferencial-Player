@@ -24,6 +24,12 @@ export interface SnapshotReproduccion {
   vista_alto?: number;
   /** Solo sube cuando hay JPEG nuevo (no reenviar base64 en cada tick). */
   vista_seq?: number;
+  /** SSIM instantáneo A↔B en el fotograma actual. */
+  ssim_actual?: number | null;
+  escaneando_metricas?: boolean;
+  /** Ruta decode: `hw:videotoolbox`, `software`, etc. (M11) */
+  decode_a?: string | null;
+  decode_b?: string | null;
 }
 
 /** Frame JPEG asíncrono (evento `vista-frame`, solo fallback canvas). */

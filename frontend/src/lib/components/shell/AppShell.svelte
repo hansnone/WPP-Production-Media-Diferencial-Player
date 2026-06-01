@@ -12,8 +12,13 @@
   import InspectWorkspace from "../../workspaces/InspectWorkspace.svelte";
   import AudioWorkspace from "../../workspaces/AudioWorkspace.svelte";
   import PlaceholderWorkspace from "../../workspaces/PlaceholderWorkspace.svelte";
+  import ReportWorkspace from "../../workspaces/ReportWorkspace.svelte";
+  import EventosQcPanel from "../eventos/EventosQcPanel.svelte";
+  import TimelineEventos from "../eventos/TimelineEventos.svelte";
   import CompareModePanel from "../compare/CompareModePanel.svelte";
   import InspectScopesPanel from "../scopes/InspectScopesPanel.svelte";
+  import MetricasPanel from "../metricas/MetricasPanel.svelte";
+  import TimelineMetricas from "../metricas/TimelineMetricas.svelte";
   import { formatearPts } from "../../player";
   import { idiomaStore } from "../../i18n/idioma.svelte";
 
@@ -45,6 +50,18 @@
     if (playerStore.snap) seekInput = playerStore.snap.pts_actual;
   });
 
+  /** Reposiciona overlay al cambiar workspace o ancho de paneles (Compare ↔ Inspect). */
+  $effect(() => {
+    const id = layoutStore.workspaceActivo;
+    void layoutStore.disposicionActual();
+    if (!("__TAURI_INTERNALS__" in window)) return;
+    if (id === "compare" || id === "inspect") {
+      requestAnimationFrame(() => {
+        window.dispatchEvent(new CustomEvent("diffplayerqc-sync-viewport"));
+      });
+    }
+  });
+
   async function aplicarSeek() {
     await playerStore.seekPts(seekInput);
   }
@@ -52,6 +69,7 @@
   const tituloPanelDerecho = $derived.by(() => {
     if (ws === "audio") return idiomaStore.t("panel.loudness");
     if (ws === "inspect") return idiomaStore.t("panel.histograma");
+    if (ws === "report") return idiomaStore.t("eventos.titulo");
     return idiomaStore.t("panel.diffAudio");
   });
 
@@ -78,6 +96,18 @@
     onSeek={aplicarSeek}
     onPaleta={() => (paletaAbierta = true)}
   />
+  <TimelineMetricas
+    duracion={Math.max(playerStore.snap?.duracion_a ?? 0, playerStore.snap?.duracion_b ?? 0)}
+    ptsActual={playerStore.snap?.pts_actual ?? 0}
+    onSeekInput={(v) => (seekInput = v)}
+    onSeek={aplicarSeek}
+  />
+  <TimelineEventos
+    duracion={Math.max(playerStore.snap?.duracion_a ?? 0, playerStore.snap?.duracion_b ?? 0)}
+    ptsActual={playerStore.snap?.pts_actual ?? 0}
+    onSeekInput={(v) => (seekInput = v)}
+    onSeek={aplicarSeek}
+  />
 
   {#if !playerStore.enTauri && playerStore.inicializado}
     <p class="aviso">{idiomaStore.t("aviso.navegador")}</p>
@@ -99,6 +129,9 @@
         <div class="fuente fuente--a">
           <span class="chip chip--a">A</span>
           <span class="mono">{playerStore.snap?.ruta_a ?? idiomaStore.t("fuentes.sinArchivo")}</span>
+          {#if playerStore.snap?.decode_a}
+            <span class="decode-chip" data-testid="decode-a">{playerStore.snap.decode_a}</span>
+          {/if}
           {#if playerStore.enTauri}
             <button type="button" class="btn-fuente" onclick={() => playerStore.abrir("a")}>
               {idiomaStore.t("menu.abrirA")}
@@ -108,6 +141,9 @@
         <div class="fuente fuente--b">
           <span class="chip chip--b">B</span>
           <span class="mono">{playerStore.snap?.ruta_b ?? idiomaStore.t("fuentes.sinArchivo")}</span>
+          {#if playerStore.snap?.decode_b}
+            <span class="decode-chip" data-testid="decode-b">{playerStore.snap.decode_b}</span>
+          {/if}
           {#if playerStore.enTauri}
             <button type="button" class="btn-fuente" onclick={() => playerStore.abrir("b")}>
               {idiomaStore.t("menu.abrirB")}
@@ -125,11 +161,7 @@
       {:else if ws === "audio"}
         <AudioWorkspace />
       {:else if ws === "report"}
-        <PlaceholderWorkspace
-          id="report"
-          titulo={idiomaStore.t("workspace.report")}
-          mensaje={idiomaStore.t("placeholder.report")}
-        />
+        <ReportWorkspace />
       {:else}
         <PlaceholderWorkspace
           id="export"
@@ -142,7 +174,7 @@
     <Panel
       titulo={tituloPanelDerecho}
       lado="derecho"
-      visible={disp.derechoVisible && ws !== "audio" && ws !== "report" && ws !== "export"}
+      visible={disp.derechoVisible && ws !== "audio" && ws !== "export" && ws !== "report"}
       anchoPx={disp.anchoDerechoPx}
       onalternar={() => layoutStore.alternarPanel("derecho")}
     >
@@ -150,6 +182,8 @@
         <InspectScopesPanel />
       {:else if ws === "compare"}
         <CompareModePanel />
+        <MetricasPanel />
+        <EventosQcPanel compacto={true} />
         <div class="niveles">
           <p class="mono">
             PTS {formatearPts(playerStore.snap?.pts_actual ?? 0)}
@@ -224,6 +258,20 @@
     display: flex;
     flex-direction: column;
     gap: 4px;
+  }
+
+  .decode-chip {
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: lowercase;
+  }
+
+  .fuente--a .decode-chip {
+    color: var(--chan-a);
+  }
+
+  .fuente--b .decode-chip {
+    color: var(--chan-b);
   }
   .btn-fuente {
     align-self: flex-start;

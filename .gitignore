@@ -11,6 +11,8 @@ tests/fixtures/*.mov
 tests/fixtures/*.mkv
 tests/fixtures/*.mxf
 videos-muestra/
+dist/repomix-*
+repomix-output*
 .DS_Store
 .aider*
 *_Diff_start.log

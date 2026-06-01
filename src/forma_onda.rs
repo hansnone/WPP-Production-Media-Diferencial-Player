@@ -1,7 +1,9 @@
-//! Escaneo offline de forma de onda y loudness integrado (M4).
+//! Escaneo offline de forma de onda y loudness (M4 + M9 EBU R128).
 //!
-//! Decodifica la pista de audio completa con FFmpeg, agrupa picos por bucket
-//! temporal y estima LUFS integrado (sin filtro K-weighting EBU completo).
+//! Decodifica la pista de audio con FFmpeg, picos por bucket, K-weighting y
+//! LUFS integrado / true peak / LRA según BS.1770.
+
+use crate::analisis_loudness::{AnalizadorLoudness, DatosEbuR128};
 
 use anyhow::{anyhow, Context, Result};
 use ffmpeg_sys_next as ffi;
@@ -14,9 +16,15 @@ pub struct FormaOnda {
     /// Picos normalizados 0..1, uno por bucket temporal.
     pub picos: Vec<f32>,
     pub duracion_secs: f64,
-    /// Loudness integrado estimado (RMS → dB, sin K-weighting).
+    /// LUFS integrado EBU R128 (K-weighting + gate). Igual que `ebu.lufs_integrado`.
     pub lufs_integrado: f64,
     pub picos_por_segundo: u32,
+    /// LUFS momentáneo por bucket (overlay waveform).
+    #[serde(default)]
+    pub lufs_buckets: Vec<f32>,
+    /// Métricas EBU R128 completas (M9).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ebu: Option<DatosEbuR128>,
 }
 
 /// Tasa de salida fija para simplificar el mapeo temporal bucket ↔ muestra.
@@ -57,6 +65,8 @@ unsafe fn escanear_inseguro(ruta: &str, picos_por_segundo: u32) -> Result<FormaO
             duracion_secs,
             lufs_integrado: f64::NEG_INFINITY,
             picos_por_segundo,
+            lufs_buckets: Vec::new(),
+            ebu: None,
         });
     }
 
@@ -112,8 +122,7 @@ unsafe fn escanear_inseguro(ruta: &str, picos_por_segundo: u32) -> Result<FormaO
     // Buckets: uno por fracción de segundo.
     let num_buckets = ((duracion_secs * picos_por_segundo as f64).ceil() as usize).max(1);
     let mut picos = vec![0.0f32; num_buckets];
-    let mut suma_cuadrados = 0.0f64;
-    let mut num_muestras = 0u64;
+    let mut analizador = AnalizadorLoudness::nuevo(num_buckets, picos_por_segundo);
     let mut muestras_acumuladas = 0i64;
 
     let mut packet = ffi::av_packet_alloc();
@@ -180,6 +189,8 @@ unsafe fn escanear_inseguro(ruta: &str, picos_por_segundo: u32) -> Result<FormaO
                 muestras_acumuladas as f64 / TASA_MUESTRAS_SALIDA as f64
             };
 
+            analizador.alimentar(slice);
+
             for (i, &muestra) in slice.iter().enumerate() {
                 let t = pts_frame + i as f64 / TASA_MUESTRAS_SALIDA as f64;
                 let bucket = (t * picos_por_segundo as f64).floor() as usize;
@@ -187,8 +198,6 @@ unsafe fn escanear_inseguro(ruta: &str, picos_por_segundo: u32) -> Result<FormaO
                 if bucket < picos.len() {
                     picos[bucket] = picos[bucket].max(abs);
                 }
-                suma_cuadrados += (muestra as f64) * (muestra as f64);
-                num_muestras += 1;
             }
             muestras_acumuladas += converted as i64;
             ffi::av_freep(&mut out_samples_data as *mut _ as *mut _);
@@ -204,17 +213,8 @@ unsafe fn escanear_inseguro(ruta: &str, picos_por_segundo: u32) -> Result<FormaO
         }
     }
 
-    let lufs_integrado = if num_muestras > 0 {
-        let rms = (suma_cuadrados / num_muestras as f64).sqrt();
-        if rms > 1e-12 {
-            // Aproximación sin K-weighting; suficiente para comparar A vs B en M4.
-            -0.691 + 20.0 * rms.log10()
-        } else {
-            f64::NEG_INFINITY
-        }
-    } else {
-        f64::NEG_INFINITY
-    };
+    let (ebu, lufs_buckets) = analizador.finalizar();
+    let lufs_integrado = ebu.lufs_integrado;
 
     liberar_recursos(&mut fmt_ctx, &mut codec_ctx, &mut swr_ctx, &mut packet, &mut frame);
 
@@ -223,6 +223,8 @@ unsafe fn escanear_inseguro(ruta: &str, picos_por_segundo: u32) -> Result<FormaO
         duracion_secs,
         lufs_integrado,
         picos_por_segundo,
+        lufs_buckets,
+        ebu: Some(ebu),
     })
 }
 

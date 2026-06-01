@@ -2,6 +2,7 @@
 //!
 //! Extraída de la v1 para compartir entre el binario legacy y `src-tauri`.
 
+pub mod eventos_qc;
 pub mod jugador;
 pub mod marcador;
 pub mod modos;
@@ -9,6 +10,9 @@ pub mod persistencia_layout;
 pub mod reproduccion;
 pub mod workspace;
 
+pub use eventos_qc::{
+    deserializar_registro, serializar_registro, EventoQc, NotaQc, RegistroEventosQc, TipoEventoQc,
+};
 pub use jugador::PlayerState;
 pub use marcador::{ListaMarcadores, Marcador};
 pub use modos::{

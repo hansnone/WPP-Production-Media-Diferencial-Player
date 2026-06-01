@@ -16,6 +16,7 @@ use ffmpeg_sys_next as ffi;
 /// `SWS_FAST_BILINEAR`: prioriza velocidad en reproducción (1080p compare en tiempo real).
 const SWS_ESCALA: i32 = 1;
 
+use crate::decode_hw::{self, EstadoHwDecode};
 use crate::trace_log;
 use crate::types::{AudioFrame, ColorMetadata, DecoderCommand, VideoFrame};
 
@@ -31,6 +32,7 @@ pub fn spawn_decoder(
     Receiver<VideoFrame>,
     Receiver<AudioFrame>,
     ColorMetadata,
+    Receiver<String>,
 )> {
     // Initialise FFmpeg (safe to call multiple times)
     unsafe {
@@ -45,18 +47,32 @@ pub fn spawn_decoder(
     let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded::<DecoderCommand>();
     let (frame_tx, frame_rx) = crossbeam_channel::bounded::<VideoFrame>(48);
     let (audio_tx, audio_rx) = crossbeam_channel::bounded::<AudioFrame>(32);
+    let (hw_tx, hw_rx) = crossbeam_channel::bounded::<String>(1);
 
     std::thread::Builder::new()
         .name(format!("decoder:{}", &path_owned))
         .spawn(move || {
-            if let Err(e) =
-                decoder_loop(&path_owned, cmd_rx, frame_tx, audio_tx, ritmo_externo, ancho_max_salida)
-            {
+            if let Err(e) = decoder_loop(
+                &path_owned,
+                cmd_rx,
+                frame_tx,
+                audio_tx,
+                hw_tx,
+                ritmo_externo,
+                ancho_max_salida,
+            ) {
                 log::error!("Decoder thread error: {e:#}");
             }
         })?;
 
-    Ok((cmd_tx, frame_rx, audio_rx, meta))
+    Ok((cmd_tx, frame_rx, audio_rx, meta, hw_rx))
+}
+
+/// Espera la etiqueta de ruta de decode (`hw:…` o `software`) que envía el hilo al abrir.
+pub fn esperar_etiqueta_decode(hw_rx: Receiver<String>) -> String {
+    hw_rx
+        .recv_timeout(Duration::from_secs(8))
+        .unwrap_or_else(|_| "software".into())
 }
 
 // ---------------------------------------------------------------------------
@@ -169,7 +185,6 @@ fn extract_metadata(path: &str) -> Result<ColorMetadata> {
         let colorspace = color_space_str(par.color_space);
         let color_transfer = color_trc_str(par.color_trc);
         let color_primaries = color_primaries_str(par.color_primaries);
-
         // Pixel format name
         let pix_name = ffi::av_get_pix_fmt_name(std::mem::transmute(par.format));
         let pixel_format = if pix_name.is_null() {
@@ -249,6 +264,7 @@ fn extract_metadata(path: &str) -> Result<ColorMetadata> {
             major_brand,
             video_stream_metadata,
             audio_stream_metadata,
+            decode_ruta: "software".into(),
         };
 
         ffi::avformat_close_input(&mut fmt_ctx);
@@ -280,6 +296,8 @@ struct DecoderCtx {
     swr_ctx: *mut ffi::SwrContext,
     /// Reservado para PTS de audio alineado al stream; hoy el PCM va a rodio sin marca temporal aquí.
     _audio_time_base: ffi::AVRational,
+    /// Aceleración HW activa (M11), si FFmpeg la aceptó para este archivo.
+    hw: Option<EstadoHwDecode>,
 }
 
 impl Drop for DecoderCtx {
@@ -303,6 +321,7 @@ impl Drop for DecoderCtx {
             if !self.swr_ctx.is_null() {
                 ffi::swr_free(&mut self.swr_ctx);
             }
+            decode_hw::liberar_opaque(self.codec_ctx);
         }
     }
 }
@@ -358,19 +377,37 @@ fn open_decoder(path: &str, ancho_max_salida: Option<u32>) -> Result<DecoderCtx>
             return Err(anyhow!("params_to_ctx: {}", av_err(ret)));
         }
 
-        // Enable multithreaded decoding
-        (*codec_ctx).thread_count = 0; // auto
+        // Hilos CPU: auto en software; HW los fija `decode_hw` a 1.
+        (*codec_ctx).thread_count = 0;
         (*codec_ctx).thread_type = ffi::FF_THREAD_FRAME as i32;
+
+        let mut hw = decode_hw::intentar_inicializar_hw(codec_ctx, codec)?;
 
         let ret = ffi::avcodec_open2(codec_ctx, codec, ptr::null_mut());
         if ret < 0 {
-            return Err(anyhow!("avcodec_open2: {}", av_err(ret)));
+            if hw.is_some() {
+                decode_hw::liberar_parcial_hw(codec_ctx);
+                hw = None;
+                (*codec_ctx).thread_count = 0;
+                let ret2 = ffi::avcodec_open2(codec_ctx, codec, ptr::null_mut());
+                if ret2 < 0 {
+                    return Err(anyhow!("avcodec_open2 (fallback): {}", av_err(ret2)));
+                }
+                log::warn!(
+                    "Decode HW rechazado por avcodec_open2 ({ret}); usando software"
+                );
+            } else {
+                return Err(anyhow!("avcodec_open2: {}", av_err(ret)));
+            }
         }
 
         let width = (*codec_ctx).width as u32;
         let height = (*codec_ctx).height as u32;
         let (out_width, out_height) = calcular_salida_escala(width, height, ancho_max_salida);
-        let src_fmt = (*codec_ctx).pix_fmt;
+        let formato_sws = hw
+            .as_ref()
+            .map(|h| h.formato_cpu)
+            .unwrap_or((*codec_ctx).pix_fmt);
 
         if out_width != width {
             log::info!(
@@ -387,7 +424,7 @@ fn open_decoder(path: &str, ancho_max_salida: Option<u32>) -> Result<DecoderCtx>
         let sws_ctx = ffi::sws_getContext(
             width as i32,
             height as i32,
-            src_fmt,
+            formato_sws,
             out_width as i32,
             out_height as i32,
             ffi::AVPixelFormat::AV_PIX_FMT_RGBA,
@@ -487,6 +524,7 @@ fn open_decoder(path: &str, ancho_max_salida: Option<u32>) -> Result<DecoderCtx>
             audio_codec_ctx,
             swr_ctx,
             _audio_time_base: audio_time_base,
+            hw,
         })
     }
 }
@@ -496,12 +534,19 @@ fn decoder_loop(
     cmd_rx: Receiver<DecoderCommand>,
     frame_tx: Sender<VideoFrame>,
     audio_tx: Sender<AudioFrame>,
+    hw_tx: Sender<String>,
     ritmo_externo: bool,
     ancho_max_salida: Option<u32>,
 ) -> Result<()> {
     let mut ctx = open_decoder(path, ancho_max_salida)?;
+    let etiqueta_hw = ctx
+        .hw
+        .as_ref()
+        .map(|h| format!("hw:{}", h.nombre_dispositivo))
+        .unwrap_or_else(|| "software".into());
+    let _ = hw_tx.send(etiqueta_hw.clone());
     log::info!(
-        "Decoder open: '{path}' {}×{} → {}×{} @ {:.2}fps",
+        "Decoder open: '{path}' {}×{} → {}×{} @ {:.2}fps [{etiqueta_hw}]",
         ctx.width,
         ctx.height,
         ctx.out_width,
@@ -892,17 +937,23 @@ unsafe fn convert_frame(
         return Err(anyhow!("rgba scratch frame null"));
     }
 
+    let frame_escala = if let Some(ref hw) = ctx.hw {
+        decode_hw::frame_para_escala(hw, frame)?
+    } else {
+        frame
+    };
+
     let src_data: [*const u8; 4] = [
-        (*frame).data[0],
-        (*frame).data[1],
-        (*frame).data[2],
-        (*frame).data[3],
+        (*frame_escala).data[0],
+        (*frame_escala).data[1],
+        (*frame_escala).data[2],
+        (*frame_escala).data[3],
     ];
 
     ffi::sws_scale(
         ctx.sws_ctx,
         src_data.as_ptr(),
-        (*frame).linesize.as_ptr(),
+        (*frame_escala).linesize.as_ptr(),
         0,
         ctx.height as i32,
         (*dst_frame).data.as_mut_ptr(),

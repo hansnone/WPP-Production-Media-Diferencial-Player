@@ -39,6 +39,7 @@ test.describe("M2 — UI shell", () => {
     await page.getByTestId("workspace-tab-compare").click();
     await expect(page.getByTestId("workspace-compare")).toBeAttached();
     await expect(page.getByTestId("compare-mode-panel")).toBeVisible();
+    await expect(page.getByTestId("metricas-panel")).toBeVisible();
   });
 
   test("workspace Inspect muestra panel de scopes", async ({ page }) => {
@@ -48,6 +49,13 @@ test.describe("M2 — UI shell", () => {
     await expect(page.getByTestId("scope-histograma")).toBeVisible();
     await expect(page.getByTestId("scope-vectoscopio")).toBeVisible();
     await expect(page.getByTestId("scope-monitor-luma")).toBeVisible();
+  });
+
+  test("workspace Report muestra panel de eventos QC", async ({ page }) => {
+    await page.getByTestId("workspace-tab-report").click();
+    await expect(page.getByTestId("workspace-report")).toBeVisible();
+    await expect(page.getByTestId("eventos-qc-panel")).toBeVisible();
+    await expect(page.getByTestId("eventos-btn-marcar")).toBeVisible();
   });
 
   test("workspace Audio muestra loudness y waveforms", async ({ page }) => {

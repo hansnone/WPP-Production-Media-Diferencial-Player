@@ -6,7 +6,11 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::{Receiver, Sender};
 use diffplayerqc::analisis_scopes::{self, ScopesFrame};
 use diffplayerqc::decoder;
+use diffplayerqc::analisis_loudness::DatosEbuR128;
 use diffplayerqc::forma_onda::{self, FormaOnda, PICOS_POR_SEGUNDO_DEFECTO};
+use diffplayerqc::metricas_video::{
+    self, MUESTRAS_POR_SEGUNDO_DEFECTO, PuntoMetrica, SerieMetricasVideo,
+};
 use diffplayerqc::types::{AudioFrame, Channel, ColorMetadata, DecoderCommand, VideoFrame};
 use diffplayerqc_core::{next_frame_repaint_delay, PlaybackState, REPINT_AUDIO_MAX_MS, REPINT_IDLE_MAX_MS};
 use rodio::{OutputStream, Sink};
@@ -68,6 +72,17 @@ pub struct SnapshotReproduccion {
     /// Incrementa solo cuando hay frame JPEG nuevo (evita repintar el canvas en vano).
     #[serde(default)]
     pub vista_seq: u64,
+    /// SSIM del fotograma actual A↔B (si ambos cargados y mismo tamaño tras escala).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ssim_actual: Option<f32>,
+    /// Escaneo offline de métricas en curso.
+    #[serde(default)]
+    pub escaneando_metricas: bool,
+    /// Ruta de decode canal A (`hw:videotoolbox`, `software`, …).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decode_a: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decode_b: Option<String>,
 }
 
 /// Payload emitido al frontend cuando termina el escaneo de forma de onda.
@@ -78,6 +93,22 @@ pub struct FormaOndaEvento {
     pub duracion_secs: f64,
     pub lufs_integrado: f64,
     pub picos_por_segundo: u32,
+    #[serde(default)]
+    pub lufs_buckets: Vec<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ebu: Option<DatosEbuR128>,
+}
+
+/// Payload cuando termina (o falla) el escaneo de métricas A↔B.
+#[derive(Debug, Clone, Serialize)]
+pub struct MetricasVideoEvento {
+    pub serie: SerieMetricasVideo,
+}
+
+/// Progreso del escaneo offline (0..1).
+#[derive(Debug, Clone, Serialize)]
+pub struct MetricasProgresoEvento {
+    pub fraccion: f32,
 }
 
 impl From<(Channel, &FormaOnda)> for FormaOndaEvento {
@@ -91,6 +122,8 @@ impl From<(Channel, &FormaOnda)> for FormaOndaEvento {
             duracion_secs: f.duracion_secs,
             lufs_integrado: f.lufs_integrado,
             picos_por_segundo: f.picos_por_segundo,
+            lufs_buckets: f.lufs_buckets.clone(),
+            ebu: f.ebu.clone(),
         }
     }
 }
@@ -154,6 +187,9 @@ struct MotorReproduccion {
     forma_onda_b: Option<FormaOnda>,
     scopes_cache: Option<ScopesFrame>,
     ultimo_pts_scopes_emitido: Option<f64>,
+    metricas_serie: Option<SerieMetricasVideo>,
+    metrica_actual: Option<PuntoMetrica>,
+    escaneando_metricas: bool,
 }
 
 /// Caché JPEG por canal (clave = PTS del frame).
@@ -205,7 +241,40 @@ impl MotorReproduccion {
             forma_onda_b: None,
             scopes_cache: None,
             ultimo_pts_scopes_emitido: None,
+            metricas_serie: None,
+            metrica_actual: None,
+            escaneando_metricas: false,
         })
+    }
+
+    fn invalidar_metricas(&mut self) {
+        self.metricas_serie = None;
+        self.metrica_actual = None;
+        self.escaneando_metricas = false;
+    }
+
+    fn rutas_par_metricas(&self) -> Option<(String, String)> {
+        let a = self.decoder_a.as_ref()?.path.clone();
+        let b = self.decoder_b.as_ref()?.path.clone();
+        Some((a, b))
+    }
+
+    fn actualizar_metrica_instantanea(&mut self) {
+        let (da, db) = match (&self.decoder_a, &self.decoder_b) {
+            (Some(a), Some(b)) => (a, b),
+            _ => {
+                self.metrica_actual = None;
+                return;
+            }
+        };
+        let (fa, fb) = match (da.ultimo_frame.as_ref(), db.ultimo_frame.as_ref()) {
+            (Some(a), Some(b)) if !a.rgba_data.is_empty() && !b.rgba_data.is_empty() => (a, b),
+            _ => {
+                self.metrica_actual = None;
+                return;
+            }
+        };
+        self.metrica_actual = Some(metricas_video::comparar_fotogramas(fa, fb));
     }
 
     fn invalidar_scopes(&mut self) {
@@ -277,8 +346,9 @@ impl MotorReproduccion {
     }
 
     fn abrir_archivo(&mut self, canal: Channel, ruta: String) -> anyhow::Result<()> {
-        let (cmd_tx, frame_rx, audio_rx, meta) =
+        let (cmd_tx, frame_rx, audio_rx, mut meta, hw_rx) =
             decoder::spawn_decoder(&ruta, true, Some(ANCHO_MAX_REPRODUCCION))?;
+        meta.decode_ruta = decoder::esperar_etiqueta_decode(hw_rx);
         let handle = DecoderHandle {
             cmd_tx,
             frame_rx,
@@ -313,7 +383,17 @@ impl MotorReproduccion {
         self.invalidar_cache_viewport();
         self.invalidar_vista_jpeg();
         self.invalidar_scopes();
+        self.invalidar_metricas();
         Ok(())
+    }
+
+    fn guardar_metricas(&mut self, serie: SerieMetricasVideo) {
+        self.metricas_serie = Some(serie);
+        self.escaneando_metricas = false;
+    }
+
+    fn metricas_actuales(&self) -> Option<SerieMetricasVideo> {
+        self.metricas_serie.clone()
     }
 
     /// Fuerza re-codificar JPEG en el próximo tick (seek, step, abrir).
@@ -354,6 +434,9 @@ impl MotorReproduccion {
             s.pause();
         }
         self.enviar_decoders(DecoderCommand::Pause);
+        // Con ritmo_externo el decoder llena el canal antes de procesar Pause;
+        // sin vaciar, cada tick mostraría un frame más hasta agotar la cola.
+        self.descartar_cola_frames_pendientes();
     }
 
     fn alternar_mute(&mut self, canal: Channel) {
@@ -440,6 +523,7 @@ impl MotorReproduccion {
             self.publicar_frames_viewport(puente);
         }
 
+        self.actualizar_metrica_instantanea();
         self.actualizar_y_emitir_scopes(app);
 
         let mut snap = self.snapshot();
@@ -555,14 +639,45 @@ impl MotorReproduccion {
         }
         if self.playback.is_playing {
             self.drenar_frames_sincronizados();
-        } else {
-            self.drenar_frames();
+        }
+        // Pausado: `vaciar` ya dejó el frame más reciente; no llamar a `drenar_frames`
+        // (descartaría la cola sin necesidad tras step/seek).
+    }
+
+    /// Vacía frames en cola sin cambiar `ultimo_frame` (freeze real al pausar).
+    fn descartar_cola_frames_pendientes(&mut self) {
+        let vaciar = |dec: &mut DecoderHandle| {
+            dec.frame_siguiente = None;
+            while dec.frame_rx.try_recv().is_ok() {}
+        };
+        if let Some(d) = &mut self.decoder_a {
+            vaciar(d);
+        }
+        if let Some(d) = &mut self.decoder_b {
+            vaciar(d);
         }
     }
 
     fn drenar_frames(&mut self) {
-        let pts = self.playback.current_pts;
         let playing = self.playback.is_playing;
+
+        if !playing {
+            // Pausado: no avanzar imagen por backlog del decoder (Tauri / ritmo_externo).
+            self.descartar_cola_frames_pendientes();
+            if let Some(d) = &self.decoder_a {
+                if let Some(p) = d.last_frame_pts {
+                    self.playback.current_pts = p;
+                }
+            }
+            if let Some(d) = &self.decoder_b {
+                if let Some(p) = d.last_frame_pts {
+                    self.playback.current_pts = self.playback.current_pts.max(p);
+                }
+            }
+            return;
+        }
+
+        let pts = self.playback.current_pts;
         const TOL: f64 = 0.005;
 
         // Igual que v1: como mucho un frame por decoder y por tick (no saltar frames intermedios).
@@ -573,13 +688,7 @@ impl MotorReproduccion {
             }
 
             if let Some(frame) = candidato {
-                let mostrar = if playing {
-                    frame.pts <= pts + TOL
-                } else {
-                    true
-                };
-
-                if mostrar {
+                if frame.pts <= pts + TOL {
                     dec.last_frame_pts = Some(frame.pts);
                     dec.ultimo_frame = Some(frame);
                     dec.frame_siguiente = dec.frame_rx.try_recv().ok();
@@ -594,19 +703,6 @@ impl MotorReproduccion {
         }
         if let Some(d) = &mut self.decoder_b {
             drenar(d);
-        }
-
-        if !playing {
-            if let Some(d) = &self.decoder_a {
-                if let Some(p) = d.last_frame_pts {
-                    self.playback.current_pts = p;
-                }
-            }
-            if let Some(d) = &self.decoder_b {
-                if let Some(p) = d.last_frame_pts {
-                    self.playback.current_pts = self.playback.current_pts.max(p);
-                }
-            }
         }
     }
 
@@ -746,6 +842,10 @@ impl MotorReproduccion {
             nivel_audio_b: self.nivel_audio_b,
             mute_a: self.mute_a,
             mute_b: self.mute_b,
+            ssim_actual: self.metrica_actual.map(|m| m.ssim),
+            escaneando_metricas: self.escaneando_metricas,
+            decode_a: self.decoder_a.as_ref().map(|d| d.meta.decode_ruta.clone()),
+            decode_b: self.decoder_b.as_ref().map(|d| d.meta.decode_ruta.clone()),
             vista_b64_a: None,
             vista_b64_b: None,
             vista_b64: None,
@@ -922,6 +1022,12 @@ pub enum OrdenMotor {
     ObtenerScopes {
         resp: Sender<Option<ScopesFrame>>,
     },
+    MetricasLista {
+        serie: SerieMetricasVideo,
+    },
+    ObtenerMetricas {
+        resp: Sender<Option<SerieMetricasVideo>>,
+    },
 }
 
 fn iniciar_hilo_jpeg_vista(app: AppHandle) -> Sender<TrabajoVistaJpeg> {
@@ -996,6 +1102,8 @@ fn iniciar_escaneo_forma_onda(
                         duracion_secs: 0.0,
                         lufs_integrado: f64::NEG_INFINITY,
                         picos_por_segundo: PICOS_POR_SEGUNDO_DEFECTO,
+                        lufs_buckets: Vec::new(),
+                        ebu: None,
                     };
                     let evento = FormaOndaEvento::from((canal, &vacia));
                     let _ = tx.send(OrdenMotor::FormaOndaLista {
@@ -1007,6 +1115,64 @@ fn iniciar_escaneo_forma_onda(
             }
         })
         .ok();
+}
+
+/// Escaneo SSIM/PSNR offline cuando A y B están cargados.
+fn iniciar_escaneo_metricas(
+    ruta_a: String,
+    ruta_b: String,
+    tx: Sender<OrdenMotor>,
+    app: AppHandle,
+) {
+    thread::Builder::new()
+        .name("metricas-video".into())
+        .spawn(move || {
+            let app_prog = app.clone();
+            let mut al_progreso = move |fraccion: f32| {
+                let payload = MetricasProgresoEvento { fraccion };
+                let _ = app_prog.emit("metricas-progreso", payload);
+            };
+            let resultado = metricas_video::escanear_par(
+                &ruta_a,
+                &ruta_b,
+                MUESTRAS_POR_SEGUNDO_DEFECTO,
+                Some(&mut al_progreso),
+            );
+            match resultado {
+                Ok(serie) => {
+                    let evento = MetricasVideoEvento {
+                        serie: serie.clone(),
+                    };
+                    let _ = tx.send(OrdenMotor::MetricasLista { serie });
+                    let _ = app.emit("metricas-lista", evento);
+                }
+                Err(e) => {
+                    log::warn!("escaneo métricas: {e:#}");
+                    let vacia = SerieMetricasVideo::vacia();
+                    let _ = tx.send(OrdenMotor::MetricasLista {
+                        serie: vacia.clone(),
+                    });
+                    let _ = app.emit(
+                        "metricas-lista",
+                        MetricasVideoEvento { serie: vacia },
+                    );
+                }
+            }
+        })
+        .ok();
+}
+
+fn intentar_escaneo_metricas(motor: &mut MotorReproduccion, tx: &Sender<OrdenMotor>, app: &AppHandle) {
+    if motor.escaneando_metricas {
+        return;
+    }
+    let Some((ruta_a, ruta_b)) = motor.rutas_par_metricas() else {
+        return;
+    };
+    motor.metricas_serie = None;
+    motor.metrica_actual = None;
+    motor.escaneando_metricas = true;
+    iniciar_escaneo_metricas(ruta_a, ruta_b, tx.clone(), app.clone());
 }
 
 fn responder(
@@ -1107,6 +1273,11 @@ pub fn iniciar_motor(
                                         tx_motor_interno.clone(),
                                         app_abrir.clone(),
                                     );
+                                    intentar_escaneo_metricas(
+                                        &mut motor,
+                                        &tx_motor_interno,
+                                        &app_abrir,
+                                    );
                                 }
                                 let _ = resp.send(out);
                             }
@@ -1166,6 +1337,12 @@ pub fn iniciar_motor(
                             }
                             OrdenMotor::ObtenerScopes { resp } => {
                                 let _ = resp.send(motor.scopes_actuales());
+                            }
+                            OrdenMotor::MetricasLista { serie } => {
+                                motor.guardar_metricas(serie);
+                            }
+                            OrdenMotor::ObtenerMetricas { resp } => {
+                                let _ = resp.send(motor.metricas_actuales());
                             }
                         },
                     Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
