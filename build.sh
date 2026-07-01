@@ -93,8 +93,46 @@ EOF
         dylibbundler -b -x "$BINS/diffplayerqc" -d "$LIBS/" -p "@executable_path/../Frameworks/"
     fi
     
+    # [HOTFIX] Homebrew's sdl2-compat requires SDL3 at runtime via dlopen.
+    # dylibbundler misses it porque no analiza llamadas dinámicas (dlopen).
+    if [ -f "/opt/homebrew/lib/libSDL3.dylib" ]; then
+        cp -L "/opt/homebrew/lib/libSDL3.dylib" "$LIBS/libSDL3.dylib"
+        chmod +w "$LIBS/libSDL3.dylib"
+        install_name_tool -id "@executable_path/../Frameworks/libSDL3.dylib" "$LIBS/libSDL3.dylib"
+        codesign --force --sign - "$LIBS/libSDL3.dylib"
+    fi
+    
+    echo -e "\n\033[1;33m[4/3] Preparando instalador con integración Youlean...\033[0m"
+    SCRIPTS_DIR="$DIST_DIR/scripts"
+    rm -rf "$SCRIPTS_DIR"
+    mkdir -p "$SCRIPTS_DIR/Settings"
+    
+    cp "assets/Youlean-Loudness-Meter-2-V2.5.14-macOS-1.dmg" "$SCRIPTS_DIR/Youlean.dmg"
+    cp -R "assets/youlean_settings/"* "$SCRIPTS_DIR/Settings/"
+    
+    cat <<'EOF' > "$SCRIPTS_DIR/postinstall"
+#!/bin/bash
+DIR=$(dirname "$0")
+
+hdiutil attach "$DIR/Youlean.dmg" -nobrowse -mountpoint /tmp/youlean_mount
+installer -pkg "/tmp/youlean_mount/Youlean Loudness Meter 2 - Installer.pkg" -target "$3"
+hdiutil detach /tmp/youlean_mount -force
+
+CONSOLE_USER=$(stat -f "%Su" /dev/console)
+if [ "$CONSOLE_USER" != "root" ]; then
+    USER_HOME=$(dscl . -read /Users/$CONSOLE_USER NFSHomeDirectory | awk '{print $2}')
+    YOULEAN_DIR="$USER_HOME/Library/Application Support/Youlean/Youlean Loudness Meter 2"
+    mkdir -p "$YOULEAN_DIR"
+    cp -R "$DIR/Settings/"* "$YOULEAN_DIR/"
+    chown -R $CONSOLE_USER "$YOULEAN_DIR"
+fi
+exit 0
+EOF
+    chmod +x "$SCRIPTS_DIR/postinstall"
+    
     pkgbuild --component "$DIST_DIR/$APP_NAME" \
              --install-location /Applications \
+             --scripts "$SCRIPTS_DIR" \
              "$DIST_DIR/WPP_DiffPlayerQC_Installer_v$VERSION.pkg" || true
              
     echo -e "\n\033[1;32m========================================================\033[0m"

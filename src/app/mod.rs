@@ -8,7 +8,7 @@ mod proxy_bridge;
 
 use crossbeam_channel::{Receiver, Sender};
 use parking_lot::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 
 use crate::decoder;
@@ -46,6 +46,7 @@ pub struct ViewState {
     pub pan_v: f32,
     pub canvas_bg_color: [f32; 3],
     pub show_clean_feed_window: bool,
+    pub show_vu_meter: bool,
     /// Canvas rect in egui screen-space (for coordinate transform)
     #[serde(skip, default = "default_rect")]
     pub canvas_rect: egui::Rect,
@@ -57,12 +58,31 @@ pub struct ViewState {
     pub split_horizontal: bool,
     /// Safe zone overlay: None, TV (EBU R95), or Social (9:16).
     pub safe_zone: crate::types::SafeZoneMode,
-    /// Current audio level 0..1 for channel A (not persisted).
+    /// EBU R128 loudness metrics for channel A (not persisted).
     #[serde(skip, default)]
-    pub audio_level_a: f32,
-    /// Current audio level 0..1 for channel B (not persisted).
+    pub loudness_a: LoudnessResult,
+    /// EBU R128 loudness metrics for channel B (not persisted).
     #[serde(skip, default)]
-    pub audio_level_b: f32,
+    pub loudness_b: LoudnessResult,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct LoudnessResult {
+    pub momentary: f64,
+    pub short_term: f64,
+    pub integrated: f64,
+    pub true_peak: [f64; 2],
+}
+
+impl Default for LoudnessResult {
+    fn default() -> Self {
+        Self {
+            momentary: -120.0,
+            short_term: -120.0,
+            integrated: -120.0,
+            true_peak: [0.0; 2],
+        }
+    }
 }
 
 impl ViewState {
@@ -142,6 +162,7 @@ impl Default for ViewState {
             pan_v: 0.0,
             canvas_bg_color: [0.0, 0.0, 0.0],
             show_clean_feed_window: false,
+            show_vu_meter: false,
             canvas_rect: egui::Rect::NOTHING,
             mute_a: true,
             mute_b: true,
@@ -149,8 +170,8 @@ impl Default for ViewState {
             vol_b: 1.0,
             split_horizontal: false,
             safe_zone: crate::types::SafeZoneMode::None,
-            audio_level_a: 0.0,
-            audio_level_b: 0.0,
+            loudness_a: LoudnessResult::default(),
+            loudness_b: LoudnessResult::default(),
         }
     }
 }
@@ -173,6 +194,8 @@ struct DecoderHandle {
 //  Main application struct
 // ---------------------------------------------------------------------------
 
+
+
 pub struct DiffPlayerApp {
     decoder_a: Option<DecoderHandle>,
     decoder_b: Option<DecoderHandle>,
@@ -190,6 +213,11 @@ pub struct DiffPlayerApp {
     _audio_stream: Option<OutputStream>,
     sink_a: Option<Sink>,
     sink_b: Option<Sink>,
+
+    // EBU R128 analyzers: Option<(analyzer, channels, sample_rate)>
+    pub ebu_a: Option<(ebur128::EbuR128, u32, u32)>,
+    pub ebu_b: Option<(ebur128::EbuR128, u32, u32)>,
+
 
     error_title: Option<String>,
     error_message: Option<String>,
@@ -298,6 +326,10 @@ impl DiffPlayerApp {
             _audio_stream: audio_stream,
             sink_a,
             sink_b,
+
+            ebu_a: None,
+            ebu_b: None,
+
 
             error_title: None,
             error_message: None,
@@ -426,6 +458,9 @@ impl DiffPlayerApp {
                         if let Some(old) = self.decoder_a.take() {
                             let _ = old.cmd_tx.send(DecoderCommand::Stop);
                         }
+                        if let Some(sink) = &self.sink_a {
+                            sink.clear();
+                        }
                         self.playback.duration_a = handle.meta.duration_secs;
                         self.decoder_a = Some(handle);
                         self.do_seek(0.0, ctx);
@@ -435,8 +470,12 @@ impl DiffPlayerApp {
                         if let Some(old) = self.decoder_b.take() {
                             let _ = old.cmd_tx.send(DecoderCommand::Stop);
                         }
+                        if let Some(sink) = &self.sink_b {
+                            sink.clear();
+                        }
                         self.playback.duration_b = handle.meta.duration_secs;
                         self.decoder_b = Some(handle);
+                        crate::ui::vu_meter::reset_meter_state(1);
                         self.do_seek(0.0, ctx);
                     }
                 }
@@ -709,49 +748,136 @@ impl DiffPlayerApp {
     }
 
     fn drain_audio_and_update_levels(&mut self) {
-        const LEVEL_DECAY: f32 = 0.92;
+        use ebur128::{EbuR128, Mode};
+
+        // If playback is paused, let the levels slowly decay in the UI if needed,
         if !self.playback.is_playing {
+            self.view.loudness_a.true_peak = [0.0, 0.0];
+            self.view.loudness_b.true_peak = [0.0, 0.0];
             return;
         }
-        let mut received_a = false;
-        let mut received_b = false;
+
+        // ── Channel A ────────────────────────────────────────────────────────
+        let mut processed_a = false;
+        let mut tp_a = [0.0f64, 0.0f64];
         if let Some(dec) = &mut self.decoder_a {
             if let Some(sink) = &self.sink_a {
                 while let Ok(audio) = dec.audio_rx.try_recv() {
-                    received_a = true;
-                    let peak = audio.samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
-                    self.view.audio_level_a =
-                        (self.view.audio_level_a * LEVEL_DECAY + peak).max(peak).min(1.0);
-                    let buf = rodio::buffer::SamplesBuffer::new(
+                    processed_a = true;
+                    let channels = audio.channels as u32;
+                    let sample_rate = audio.sample_rate as u32;
+
+                    // Initialize or reset analyzer if format changes
+                    if self.ebu_a.is_none() || self.ebu_a.as_ref().unwrap().1 != channels || self.ebu_a.as_ref().unwrap().2 != sample_rate {
+                        if let Ok(ebu) = EbuR128::new(channels, sample_rate, Mode::I | Mode::M | Mode::S | Mode::TRUE_PEAK) {
+                            self.ebu_a = Some((ebu, channels, sample_rate));
+                        }
+                    }
+
+                    if let Some((ebu, stored_ch, stored_rate)) = &mut self.ebu_a {
+                        // For mono, we might need to duplicate to stereo for proper loudness calculation
+                        // but ebur128 handles channel mapping if initialized correctly.
+                        if channels == 1 {
+                            // Interleave mono into stereo
+                            let mut stereo = Vec::with_capacity(audio.samples.len() * 2);
+                            for &s in &audio.samples {
+                                stereo.push(s);
+                                stereo.push(s);
+                            }
+                            // If we duplicated to stereo, ensure ebu analyzer is 2 channels
+                            if *stored_ch != 2 {
+                                if let Ok(new_ebu) = EbuR128::new(2, sample_rate, Mode::I | Mode::M | Mode::S | Mode::TRUE_PEAK) {
+                                    *ebu = new_ebu;
+                                    *stored_ch = 2;
+                                    *stored_rate = sample_rate;
+                                }
+                            }
+                            let _ = ebu.add_frames_f32(&stereo);
+                        } else {
+                            let _ = ebu.add_frames_f32(&audio.samples);
+                        }
+
+                        let chs = *stored_ch;
+                        tp_a[0] = tp_a[0].max(ebu.prev_true_peak(0).unwrap_or(0.0));
+                        tp_a[1] = tp_a[1].max(if chs > 1 { ebu.prev_true_peak(1).unwrap_or(0.0) } else { ebu.prev_true_peak(0).unwrap_or(0.0) });
+
+                        self.view.loudness_a = LoudnessResult {
+                            momentary: ebu.loudness_momentary().unwrap_or(-120.0),
+                            short_term: ebu.loudness_shortterm().unwrap_or(-120.0),
+                            integrated: ebu.loudness_global().unwrap_or(-120.0),
+                            true_peak: tp_a,
+                        };
+                    }
+
+                    sink.append(rodio::buffer::SamplesBuffer::new(
                         audio.channels,
                         audio.sample_rate,
                         audio.samples,
-                    );
-                    sink.append(buf);
+                    ));
                 }
             }
         }
-        if !received_a {
-            self.view.audio_level_a *= LEVEL_DECAY;
+        if !processed_a {
+            self.view.loudness_a.true_peak = [0.0, 0.0];
         }
+
+        // ── Channel B ────────────────────────────────────────────────────────
+        let mut processed_b = false;
+        let mut tp_b = [0.0f64, 0.0f64];
         if let Some(dec) = &mut self.decoder_b {
             if let Some(sink) = &self.sink_b {
                 while let Ok(audio) = dec.audio_rx.try_recv() {
-                    received_b = true;
-                    let peak = audio.samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
-                    self.view.audio_level_b =
-                        (self.view.audio_level_b * LEVEL_DECAY + peak).max(peak).min(1.0);
-                    let buf = rodio::buffer::SamplesBuffer::new(
+                    processed_b = true;
+                    let channels = audio.channels as u32;
+                    let sample_rate = audio.sample_rate as u32;
+
+                    if self.ebu_b.is_none() || self.ebu_b.as_ref().unwrap().1 != channels || self.ebu_b.as_ref().unwrap().2 != sample_rate {
+                        if let Ok(ebu) = EbuR128::new(channels, sample_rate, Mode::I | Mode::M | Mode::S | Mode::TRUE_PEAK) {
+                            self.ebu_b = Some((ebu, channels, sample_rate));
+                        }
+                    }
+
+                    if let Some((ebu, stored_ch, stored_rate)) = &mut self.ebu_b {
+                        if channels == 1 {
+                            let mut stereo = Vec::with_capacity(audio.samples.len() * 2);
+                            for &s in &audio.samples {
+                                stereo.push(s);
+                                stereo.push(s);
+                            }
+                            if *stored_ch != 2 {
+                                if let Ok(new_ebu) = EbuR128::new(2, sample_rate, Mode::I | Mode::M | Mode::S | Mode::TRUE_PEAK) {
+                                    *ebu = new_ebu;
+                                    *stored_ch = 2;
+                                    *stored_rate = sample_rate;
+                                }
+                            }
+                            let _ = ebu.add_frames_f32(&stereo);
+                        } else {
+                            let _ = ebu.add_frames_f32(&audio.samples);
+                        }
+
+                        let chs = *stored_ch;
+                        tp_b[0] = tp_b[0].max(ebu.prev_true_peak(0).unwrap_or(0.0));
+                        tp_b[1] = tp_b[1].max(if chs > 1 { ebu.prev_true_peak(1).unwrap_or(0.0) } else { ebu.prev_true_peak(0).unwrap_or(0.0) });
+
+                        self.view.loudness_b = LoudnessResult {
+                            momentary: ebu.loudness_momentary().unwrap_or(-120.0),
+                            short_term: ebu.loudness_shortterm().unwrap_or(-120.0),
+                            integrated: ebu.loudness_global().unwrap_or(-120.0),
+                            true_peak: tp_b,
+                        };
+                    }
+
+                    sink.append(rodio::buffer::SamplesBuffer::new(
                         audio.channels,
                         audio.sample_rate,
                         audio.samples,
-                    );
-                    sink.append(buf);
+                    ));
                 }
             }
         }
-        if !received_b {
-            self.view.audio_level_b *= LEVEL_DECAY;
+        if !processed_b {
+            self.view.loudness_b.true_peak = [0.0, 0.0];
         }
     }
 
@@ -760,14 +886,14 @@ impl DiffPlayerApp {
             if self.view.mute_a {
                 sink.set_volume(0.0);
             } else {
-                sink.set_volume(self.view.vol_a);
+                sink.set_volume(1.0); // Hardcoded fixed volume
             }
         }
         if let Some(sink) = &self.sink_b {
             if self.view.mute_b {
                 sink.set_volume(0.0);
             } else {
-                sink.set_volume(self.view.vol_b);
+                sink.set_volume(1.0); // Hardcoded fixed volume
             }
         }
     }
@@ -1157,6 +1283,7 @@ impl eframe::App for DiffPlayerApp {
 
         self.show_clean_feed_viewport(ctx);
         self.show_proxy_progress_window(ctx);
+        crate::ui::vu_meter::show_vu_meter_window(ctx, self);
         self.show_error_modal_if_any(ctx);
     }
 

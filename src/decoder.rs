@@ -8,7 +8,6 @@ use anyhow::{anyhow, Context, Result};
 use crossbeam_channel::{Receiver, Sender};
 use std::ffi::{CStr, CString};
 use std::ptr;
-use std::time::Duration;
 
 use ffmpeg_sys_next as ffi;
 
@@ -39,7 +38,7 @@ pub fn spawn_decoder(
 
     let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded::<DecoderCommand>();
     let (frame_tx, frame_rx) = crossbeam_channel::bounded::<VideoFrame>(8);
-    let (audio_tx, audio_rx) = crossbeam_channel::bounded::<AudioFrame>(32);
+    let (audio_tx, audio_rx) = crossbeam_channel::bounded::<AudioFrame>(256);
 
     std::thread::Builder::new()
         .name(format!("decoder:{}", &path_owned))
@@ -617,12 +616,8 @@ fn decoder_loop(
                             log::warn!("Decoder thread exiting: UI frame channel disconnected");
                             return Ok(());
                         }
-                        // Throttle: in play mode, don't decode faster than real time
-                        if is_playing && ctx.fps > 0.0 {
-                            let frame_secs = 1.0 / ctx.fps;
-                            let sleep_dur = Duration::from_secs_f64(frame_secs).max(Duration::from_millis(1));
-                            std::thread::sleep(sleep_dur);
-                        }
+                        // Throttle removed: we rely on channel bounds (frame_tx = 8) to pace the decoder naturally.
+                        // This allows audio_tx to build a healthy buffer so rodio never starves.
                     }
                     recv(cmd_rx) -> msg => {
                         pending_frame = Some(f); // Put it back
@@ -770,8 +765,8 @@ unsafe fn decode_one_frame(
 
             while ffi::avcodec_receive_frame(ctx.audio_codec_ctx, frame) == 0 {
                 if let Some(audio) = convert_audio_frame(ctx, frame)? {
-                    // Send without blocking completely if UI is stuck, or just send (bounded limits memory)
-                    let _ = audio_tx.try_send(audio);
+                    // Send blocking (with bounds) so we don't drop audio packets and cause glitches
+                    let _ = audio_tx.send(audio);
                 }
                 ffi::av_frame_unref(frame);
             }

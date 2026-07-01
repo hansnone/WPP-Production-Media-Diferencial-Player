@@ -952,6 +952,9 @@ pub fn show_audio_panel(ui: &mut Ui, app: &mut DiffPlayerApp) {
         if resp_a.clicked() {
             mute_a = !mute_a;
             app.view_mut().mute_a = mute_a;
+            if !mute_a {
+                app.view_mut().mute_b = true; // Mutuamente excluyentes
+            }
             ui.ctx().request_repaint();
         }
         resp_a.on_hover_text(if mute_a {
@@ -969,19 +972,7 @@ pub fn show_audio_panel(ui: &mut Ui, app: &mut DiffPlayerApp) {
                 "A lind (tamya)",
             )
         });
-        ui.add_space(5.0);
-        let mut vol_a = app.view().vol_a;
-        if ui
-            .add(
-                egui::Slider::new(&mut vol_a, 0.0..=2.0)
-                    .vertical()
-                    .show_value(false),
-            )
-            .changed()
-        {
-            app.view_mut().vol_a = vol_a;
-        }
-        let level_a = app.view().audio_level_a.clamp(0.0, 1.0);
+        let level_a = (app.view().loudness_a.true_peak[0].max(app.view().loudness_a.true_peak[1]) as f32).clamp(0.0, 1.0);
         let color_a = if level_a < 0.5 {
             Color32::from_rgb(80, 200, 100)
         } else if level_a < 0.85 {
@@ -1013,6 +1004,9 @@ pub fn show_audio_panel(ui: &mut Ui, app: &mut DiffPlayerApp) {
         if resp_b.clicked() {
             mute_b = !mute_b;
             app.view_mut().mute_b = mute_b;
+            if !mute_b {
+                app.view_mut().mute_a = true; // Mutuamente excluyentes
+            }
             ui.ctx().request_repaint();
         }
         resp_b.on_hover_text(if mute_b {
@@ -1030,19 +1024,7 @@ pub fn show_audio_panel(ui: &mut Ui, app: &mut DiffPlayerApp) {
                 "B lind (tamya)",
             )
         });
-        ui.add_space(5.0);
-        let mut vol_b = app.view().vol_b;
-        if ui
-            .add(
-                egui::Slider::new(&mut vol_b, 0.0..=2.0)
-                    .vertical()
-                    .show_value(false),
-            )
-            .changed()
-        {
-            app.view_mut().vol_b = vol_b;
-        }
-        let level_b = app.view().audio_level_b.clamp(0.0, 1.0);
+        let level_b = (app.view().loudness_b.true_peak[0].max(app.view().loudness_b.true_peak[1]) as f32).clamp(0.0, 1.0);
         let color_b = if level_b < 0.5 {
             Color32::from_rgb(80, 160, 220)
         } else if level_b < 0.85 {
@@ -1055,5 +1037,57 @@ pub fn show_audio_panel(ui: &mut Ui, app: &mut DiffPlayerApp) {
                 .fill(color_b)
                 .desired_width(40.0),
         );
+
+        ui.add_space(20.0);
+        ui.separator();
+        ui.add_space(10.0);
+
+        if ui
+            .button(tr(
+                lang,
+                "Audiometer (Abrir/Cerrar)",
+                "Audiometer (Toggle)",
+                "Audiometer",
+            ))
+            .on_hover_text(tr(
+                lang,
+                "Abre o cierra el medidor Audiometer (Youlean)",
+                "Opens or closes the Audiometer",
+                "Audiometer",
+            ))
+            .clicked()
+        {
+            std::process::Command::new("sh")
+                .arg("-c")
+                .arg(
+                    "if osascript -e 'application \"Youlean Loudness Meter 2\" is running' | grep -q 'true'; then \
+                         osascript -e 'tell application \"Youlean Loudness Meter 2\" to quit'; \
+                     else \
+                         open -a \"Youlean Loudness Meter 2\"; \
+                     fi",
+                )
+                .spawn()
+                .ok();
+        }
+
+        ui.add_space(10.0);
+
+        if ui
+            .button(tr(
+                lang,
+                "VU Meter (Abrir/Cerrar)",
+                "VU Meter (Toggle)",
+                "VU Meter",
+            ))
+            .on_hover_text(tr(
+                lang,
+                "Abre o cierra el vúmetro digital LED",
+                "Opens or closes the digital LED VU Meter",
+                "VU Meter",
+            ))
+            .clicked()
+        {
+            app.view_mut().show_vu_meter = !app.view().show_vu_meter;
+        }
     });
 }
