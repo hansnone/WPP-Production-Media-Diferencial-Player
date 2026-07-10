@@ -258,6 +258,13 @@ pub struct DiffPlayerApp {
     proxy_temp_dirs: Vec<PathBuf>,
     /// Error string from proxy background thread.
     proxy_error: Arc<Mutex<Option<String>>>,
+
+    pub thumb_rx_a: Option<crossbeam_channel::Receiver<crate::thumbnail::ThumbnailFrame>>,
+    pub thumb_rx_b: Option<crossbeam_channel::Receiver<crate::thumbnail::ThumbnailFrame>>,
+    pub thumb_running_a: Arc<AtomicBool>,
+    pub thumb_running_b: Arc<AtomicBool>,
+    pub thumbs_a: Vec<Option<egui::TextureHandle>>,
+    pub thumbs_b: Vec<Option<egui::TextureHandle>>,
 }
 
 /// Key actions deferred from ctx.input() to start of update() to avoid re-entrancy on macOS.
@@ -364,6 +371,12 @@ impl DiffPlayerApp {
             proxy_target_channel: None,
             proxy_temp_dirs: Vec::new(),
             proxy_error: Arc::new(Mutex::new(None)),
+            thumb_rx_a: None,
+            thumb_rx_b: None,
+            thumb_running_a: Arc::new(AtomicBool::new(false)),
+            thumb_running_b: Arc::new(AtomicBool::new(false)),
+            thumbs_a: Vec::new(),
+            thumbs_b: Vec::new(),
         }
     }
 
@@ -484,6 +497,14 @@ impl DiffPlayerApp {
                             sink.clear();
                         }
                         self.playback.duration_a = handle.meta.duration_secs;
+                        let (rx, running) = crate::thumbnail::spawn_thumbnail_generator(
+                            handle.path.clone(),
+                            handle.meta.duration_secs,
+                            100, // Fixed count for now
+                        );
+                        self.thumb_rx_a = Some(rx);
+                        self.thumb_running_a = running;
+                        self.thumbs_a = vec![None; 100];
                         self.decoder_a = Some(handle);
                         self.do_seek(0.0, ctx);
                         // No need for repaint here as do_seek handles it
@@ -496,6 +517,14 @@ impl DiffPlayerApp {
                             sink.clear();
                         }
                         self.playback.duration_b = handle.meta.duration_secs;
+                        let (rx, running) = crate::thumbnail::spawn_thumbnail_generator(
+                            handle.path.clone(),
+                            handle.meta.duration_secs,
+                            100,
+                        );
+                        self.thumb_rx_b = Some(rx);
+                        self.thumb_running_b = running;
+                        self.thumbs_b = vec![None; 100];
                         self.decoder_b = Some(handle);
                         crate::ui::vu_meter::reset_meter_state(1);
                         self.do_seek(0.0, ctx);
@@ -513,6 +542,32 @@ impl DiffPlayerApp {
     // -----------------------------------------------------------------------
     /// Drain at most one frame per decoder that is at or before current_pts (master clock).
     /// Future frames stay in next_frame or channel; no blind turbo-drain, no clock resync.
+    fn drain_thumbnails(&mut self, ctx: &egui::Context) {
+        let mut process_thumbs = |rx: &crossbeam_channel::Receiver<crate::thumbnail::ThumbnailFrame>, thumbs: &mut Vec<Option<egui::TextureHandle>>| {
+            while let Ok(frame) = rx.try_recv() {
+                let img = egui::ColorImage::from_rgba_unmultiplied(
+                    [frame.width as usize, frame.height as usize],
+                    &frame.rgba_data,
+                );
+                let handle = ctx.load_texture(
+                    format!("thumb_{}", frame.index),
+                    img,
+                    egui::TextureOptions::LINEAR,
+                );
+                if frame.index < thumbs.len() {
+                    thumbs[frame.index] = Some(handle);
+                }
+            }
+        };
+
+        if let Some(rx) = &self.thumb_rx_a {
+            process_thumbs(rx, &mut self.thumbs_a);
+        }
+        if let Some(rx) = &self.thumb_rx_b {
+            process_thumbs(rx, &mut self.thumbs_b);
+        }
+    }
+
     fn drain_frames(&mut self, render_state: &egui_wgpu::RenderState) -> bool {
         let device = &render_state.device;
         let queue = &render_state.queue;
@@ -1334,6 +1389,7 @@ impl eframe::App for DiffPlayerApp {
             }
             self.sync_uniforms();
         }
+        self.drain_thumbnails(ctx);
         self.drain_audio_and_update_levels();
         self.apply_sink_volumes();
 

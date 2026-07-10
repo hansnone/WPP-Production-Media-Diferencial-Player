@@ -38,12 +38,29 @@ pub fn show(ui: &mut Ui, app: &mut DiffPlayerApp) {
 
     let painter = ui.painter().clone();
 
-    // ── Background track ──────────────────────────────────────────────────
+    // ── Background track (Thumbnails) ──────────────────────────────────────────────────
     let track_rect = Rect::from_min_max(
-        Pos2::new(rect.left() + 4.0, rect.center().y - 4.0),
-        Pos2::new(rect.right() - 4.0, rect.center().y + 4.0),
+        Pos2::new(rect.left() + 4.0, rect.top() + 20.0), // Below timecode
+        Pos2::new(rect.right() - 4.0, rect.bottom() - 4.0),
     );
     painter.rect_filled(track_rect, 4.0, ui.visuals().faint_bg_color);
+
+    let thumb_count = app.thumbs_a.len();
+    if thumb_count > 0 {
+        let thumb_width = track_rect.width() / thumb_count as f32;
+        for (i, thumb_opt) in app.thumbs_a.iter().enumerate() {
+            if let Some(tex) = thumb_opt {
+                let x0 = track_rect.left() + i as f32 * thumb_width;
+                let x1 = x0 + thumb_width;
+                let thumb_rect = Rect::from_min_max(
+                    Pos2::new(x0, track_rect.top()),
+                    Pos2::new(x1, track_rect.bottom()),
+                );
+                let uv = Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(1.0, 1.0));
+                painter.image(tex.id(), thumb_rect, uv, egui::Color32::WHITE);
+            }
+        }
+    }
 
     let mut dragging_handle = false;
     // ── Loop Range ────────────────────────────────────────────────────────
