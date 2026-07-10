@@ -64,6 +64,14 @@ pub struct ViewState {
     /// EBU R128 loudness metrics for channel B (not persisted).
     #[serde(skip, default)]
     pub loudness_b: LoudnessResult,
+    #[serde(default = "default_true")]
+    pub loop_playback: bool,
+    #[serde(skip)]
+    pub saved_loop_playback: Option<bool>,
+    #[serde(skip)]
+    pub pending_play_after_delay: Option<std::time::Instant>,
+    #[serde(skip)]
+    pub last_psnr: Option<f64>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -162,16 +170,20 @@ impl Default for ViewState {
             pan_v: 0.0,
             canvas_bg_color: [0.0, 0.0, 0.0],
             show_clean_feed_window: false,
-            show_vu_meter: false,
+            show_vu_meter: true,
             canvas_rect: egui::Rect::NOTHING,
-            mute_a: true,
-            mute_b: true,
+            mute_a: false,
+            mute_b: false,
             vol_a: 1.0,
             vol_b: 1.0,
             split_horizontal: false,
             safe_zone: crate::types::SafeZoneMode::None,
-            loudness_a: LoudnessResult::default(),
-            loudness_b: LoudnessResult::default(),
+            loudness_a: LoudnessResult { momentary: 0.0, short_term: 0.0, integrated: 0.0, true_peak: [0.0, 0.0] },
+            loudness_b: LoudnessResult { momentary: 0.0, short_term: 0.0, integrated: 0.0, true_peak: [0.0, 0.0] },
+            loop_playback: true,
+            saved_loop_playback: None,
+            pending_play_after_delay: None,
+            last_psnr: None,
         }
     }
 }
@@ -194,14 +206,13 @@ struct DecoderHandle {
 //  Main application struct
 // ---------------------------------------------------------------------------
 
-
-
 pub struct DiffPlayerApp {
     decoder_a: Option<DecoderHandle>,
     decoder_b: Option<DecoderHandle>,
 
     view: ViewState,
     playback: PlaybackState,
+    pub session: crate::types::SessionState,
 
     renderer: Arc<Mutex<VideoRenderer>>,
 
@@ -245,6 +256,8 @@ pub struct DiffPlayerApp {
     proxy_target_channel: Option<Channel>,
     /// All proxy temp dirs to remove on exit.
     proxy_temp_dirs: Vec<PathBuf>,
+    /// Error string from proxy background thread.
+    proxy_error: Arc<Mutex<Option<String>>>,
 }
 
 /// Key actions deferred from ctx.input() to start of update() to avoid re-entrancy on macOS.
@@ -262,6 +275,11 @@ enum PendingKeyAction {
     Zoom(f32),
     ResetZoomPan,
     SwapVideos,
+    SetLoopIn,
+    SetLoopOut,
+    ToggleLoopRange,
+    ClearLoopRange,
+    AddMarker,
 }
 
 impl Default for PendingKeyAction {
@@ -318,6 +336,7 @@ impl DiffPlayerApp {
             decoder_b: None,
             view,
             playback: PlaybackState::default(),
+            session: crate::types::SessionState::default(),
             renderer,
             drag_start: None,
             dragging_split: false,
@@ -344,6 +363,7 @@ impl DiffPlayerApp {
             proxy_temp_dir: None,
             proxy_target_channel: None,
             proxy_temp_dirs: Vec::new(),
+            proxy_error: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -374,6 +394,7 @@ impl DiffPlayerApp {
             temp_dir,
             Arc::clone(&self.proxy_progress),
             Arc::clone(&self.proxy_running),
+            Arc::clone(&self.proxy_error),
         );
     }
 
@@ -404,6 +425,7 @@ impl DiffPlayerApp {
             temp_dir,
             Arc::clone(&self.proxy_progress),
             Arc::clone(&self.proxy_running),
+            Arc::clone(&self.proxy_error),
         );
     }
 
@@ -440,7 +462,7 @@ impl DiffPlayerApp {
 
     /// Load a video from a filesystem path into the given channel, replacing any existing video.
     pub fn open_video_from_path(&mut self, path_str: String, chan: Channel, ctx: &egui::Context) {
-        match decoder::spawn_decoder(&path_str) {
+        match decoder::spawn_decoder(&path_str, 48000, 2) {
             Ok((cmd_tx, frame_rx, audio_rx, meta)) => {
                 let handle = DecoderHandle {
                     cmd_tx,
@@ -500,19 +522,24 @@ impl DiffPlayerApp {
         const PTS_TOLERANCE: f64 = 0.005;
 
         let mut process_dec = |dec: &mut DecoderHandle, is_a: bool| {
-            // Candidate: next_frame (peek) or one try_recv
-            let mut candidate = dec.next_frame.take();
-            if candidate.is_none() {
-                candidate = dec.frame_rx.try_recv().ok();
+            let mut best_frame = dec.next_frame.take();
+
+            if is_playing {
+                loop {
+                    match dec.frame_rx.try_recv() {
+                        Ok(frame) if frame.pts <= current_pts + PTS_TOLERANCE => best_frame = Some(frame),
+                        Ok(frame) => { dec.next_frame = Some(frame); break; }
+                        Err(_) => break,
+                    }
+                }
+            } else {
+                while let Ok(frame) = dec.frame_rx.try_recv() {
+                    best_frame = Some(frame);
+                }
             }
 
-            if let Some(frame) = candidate {
-                let show = if is_playing {
-                    frame.pts <= current_pts + PTS_TOLERANCE
-                } else {
-                    // Paused: show latest frame we have (step/seek)
-                    true
-                };
+            if let Some(frame) = best_frame {
+                let show = true;
 
                 if show {
                     let (w, h) = (frame.width, frame.height);
@@ -679,6 +706,23 @@ impl DiffPlayerApp {
     pub fn swap_videos(&mut self, ctx: &egui::Context) {
         self.swap_videos_inner(ctx);
     }
+    pub fn set_loop_in(&mut self) {
+        self.playback.loop_in = Some(self.playback.current_pts);
+        if self.playback.loop_out.is_some() {
+            self.playback.loop_range_active = true;
+        }
+    }
+    pub fn set_loop_out(&mut self) {
+        self.playback.loop_out = Some(self.playback.current_pts);
+        if self.playback.loop_in.is_some() {
+            self.playback.loop_range_active = true;
+        }
+    }
+    pub fn toggle_loop_range(&mut self) {
+        if self.playback.loop_in.is_some() && self.playback.loop_out.is_some() {
+            self.playback.loop_range_active = !self.playback.loop_range_active;
+        }
+    }
     fn swap_videos_inner(&mut self, ctx: &egui::Context) {
         std::mem::swap(&mut self.decoder_a, &mut self.decoder_b);
         std::mem::swap(&mut self.playback.duration_a, &mut self.playback.duration_b);
@@ -717,11 +761,19 @@ impl DiffPlayerApp {
             let elapsed = start.elapsed().as_secs_f64();
             self.playback.current_pts = self.playback.playback_start_pts + elapsed;
             let max_duration = self.playback.duration_a.max(self.playback.duration_b);
-            if max_duration > 0.0 {
-                if self.playback.current_pts >= max_duration {
+
+            if self.playback.loop_range_active {
+                if let (Some(in_pts), Some(out_pts)) = (self.playback.loop_in, self.playback.loop_out) {
+                    if self.playback.current_pts >= out_pts {
+                        self.do_seek(in_pts, ctx);
+                    }
+                }
+            } else if max_duration > 0.0 {
+                if self.view.loop_playback && self.playback.current_pts >= max_duration {
                     self.do_seek(0.0, ctx);
-                } else {
-                    self.playback.current_pts = self.playback.current_pts.clamp(0.0, max_duration);
+                } else if self.playback.current_pts >= max_duration {
+                    self.pause_both(ctx);
+                    self.playback.current_pts = max_duration;
                 }
             }
         }
@@ -899,6 +951,9 @@ impl DiffPlayerApp {
     }
 
     fn handle_keyboard_input(&mut self, ctx: &egui::Context) {
+        if ctx.wants_keyboard_input() {
+            return;
+        }
         ctx.input(|i| {
             if i.key_pressed(egui::Key::Space) {
                 self.pending_play_pause_toggle = true;
@@ -1051,6 +1106,8 @@ impl DiffPlayerApp {
         egui::TopBottomPanel::bottom("timeline").show(ctx, |ui| {
             crate::ui::timeline::show(ui, self);
         });
+        
+        crate::ui::markers::show(ctx, self);
     }
 
     fn show_clean_feed_viewport(&mut self, ctx: &egui::Context) {
@@ -1237,6 +1294,23 @@ impl eframe::App for DiffPlayerApp {
                 self.view.pan_v = 0.0;
             }
             PendingKeyAction::SwapVideos => self.swap_videos_inner(ctx),
+            PendingKeyAction::SetLoopIn => self.set_loop_in(),
+            PendingKeyAction::SetLoopOut => self.set_loop_out(),
+            PendingKeyAction::ToggleLoopRange => self.toggle_loop_range(),
+            PendingKeyAction::ClearLoopRange => {
+                self.playback.loop_in = None;
+                self.playback.loop_out = None;
+                self.playback.loop_range_active = false;
+            }
+            PendingKeyAction::AddMarker => {
+                let m = crate::types::Marker {
+                    pts: self.playback.current_pts,
+                    note: "New Marker".to_string(),
+                    color: [0.0, 0.7, 1.0],
+                    channel_hint: None,
+                };
+                self.session.markers.push(m);
+            }
         }
         // When proxy generation just finished: load proxy.mkv into the target channel.
         self.complete_proxy_if_ready(ctx);
@@ -1785,6 +1859,9 @@ fn show_canvas(ui: &mut egui::Ui, app: &mut DiffPlayerApp, _frame: &mut eframe::
 fn default_rect() -> egui::Rect {
     egui::Rect::NOTHING
 }
+fn default_true() -> bool {
+    true
+}
 
 // ---------------------------------------------------------------------------
 //  Font setup
@@ -1841,9 +1918,35 @@ impl DiffPlayerApp {
     pub fn view(&self) -> &ViewState {
         &self.view
     }
+    pub fn playback_mut(&mut self) -> &mut PlaybackState {
+        &mut self.playback
+    }
     pub fn playback(&self) -> &PlaybackState {
         &self.playback
     }
+    pub fn calculate_psnr(&mut self) {
+        if let (Some(dec_a), Some(dec_b)) = (&mut self.decoder_a, &mut self.decoder_b) {
+            if let (Some(fa), Some(fb)) = (&dec_a.next_frame, &dec_b.next_frame) {
+                if let Some(psnr) = crate::metrics::compute_psnr(&fa.rgba_data, &fb.rgba_data) {
+                    self.view.last_psnr = Some(psnr);
+                }
+            }
+        }
+    }
+    pub fn export_csv(&self) {
+        if let Ok(mut wtr) = csv::Writer::from_path("export_diffplayerqc.csv") {
+            let _ = wtr.write_record(&["Timecode", "Note"]);
+            for m in &self.session.markers {
+                let _ = wtr.write_record(&[
+                    crate::ui::markers::format_timecode(m.pts, 25.0),
+                    m.note.clone(),
+                ]);
+            }
+            let _ = wtr.flush();
+        }
+    }
+    pub fn save_session(&mut self) {}
+    pub fn load_session(&mut self, _ctx: &egui::Context) {}
     pub fn decoder_a_meta(&self) -> Option<&ColorMetadata> {
         self.decoder_a.as_ref().map(|d| &d.meta)
     }

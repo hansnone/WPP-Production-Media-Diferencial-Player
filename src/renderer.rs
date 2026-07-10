@@ -358,9 +358,13 @@ impl egui_wgpu::CallbackTrait for RenderCallback {
         // SAFETY: We are recording commands into the RenderPass which will be submitted immediately.
         // The VideoRenderer (and its pipeline/bind_group) is kept alive by the Arc in RenderCallback.
         unsafe {
+            // Helper to bypass restrictive lifetime bounds on RenderPass.
+            unsafe fn extend<'a, T>(t: &T) -> &'a T {
+                std::mem::transmute(t)
+            }
             let rp: &mut wgpu::RenderPass<'a> = std::mem::transmute(render_pass);
-            rp.set_pipeline(std::mem::transmute(&rend.pipeline));
-            rp.set_bind_group(0, std::mem::transmute(&rend.bind_group), &[]);
+            rp.set_pipeline(extend(&rend.pipeline));
+            rp.set_bind_group(0, extend(&rend.bind_group), &[]);
             rp.draw(0..3, 0..1);
         }
     }

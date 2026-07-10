@@ -32,8 +32,12 @@ pub fn log(msg: &str) {
         if let Some(ref mut f) = *guard {
             let now = chrono::Local::now();
             let line = format!("[{}] {}\n", now.format("%Y-%m-%d %H:%M:%S%.3f"), msg);
-            let _ = f.write_all(line.as_bytes());
-            let _ = f.flush();
+            if let Err(e) = f.write_all(line.as_bytes()) {
+                eprintln!("Failed to write trace log: {}", e);
+            }
+            if let Err(e) = f.flush() {
+                eprintln!("Failed to flush trace log: {}", e);
+            }
         }
     }
 }

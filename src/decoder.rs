@@ -20,6 +20,8 @@ use crate::types::{AudioFrame, ColorMetadata, DecoderCommand, VideoFrame};
 /// Spawn a decoder thread for the given file path.
 pub fn spawn_decoder(
     path: &str,
+    target_sample_rate: i32,
+    target_channels: i32,
 ) -> Result<(
     Sender<DecoderCommand>,
     Receiver<VideoFrame>,
@@ -43,7 +45,14 @@ pub fn spawn_decoder(
     std::thread::Builder::new()
         .name(format!("decoder:{}", &path_owned))
         .spawn(move || {
-            if let Err(e) = decoder_loop(&path_owned, cmd_rx, frame_tx, audio_tx) {
+            if let Err(e) = decoder_loop(
+                &path_owned,
+                target_sample_rate,
+                target_channels,
+                cmd_rx,
+                frame_tx,
+                audio_tx,
+            ) {
                 log::error!("Decoder thread error: {e:#}");
             }
         })?;
@@ -210,6 +219,17 @@ fn extract_metadata(path: &str) -> Result<ColorMetadata> {
         // Video stream metadata (Stream #0:0)
         let video_stream_metadata = dict_to_string(stream.metadata);
 
+        // Timecode extraction
+        let mut start_timecode = dict_get(stream.metadata, "timecode");
+        if start_timecode.is_empty() {
+            start_timecode = dict_get((*fmt_ctx).metadata, "timecode");
+        }
+        let start_timecode_opt = if start_timecode.is_empty() {
+            None
+        } else {
+            Some(start_timecode)
+        };
+
         // Audio stream metadata (Stream #0:1) if present
         let audio_stream_metadata = {
             let a_idx = find_audio_stream(streams);
@@ -239,6 +259,7 @@ fn extract_metadata(path: &str) -> Result<ColorMetadata> {
             video_codec,
             audio_codec,
             major_brand,
+            start_timecode: start_timecode_opt,
             video_stream_metadata,
             audio_stream_metadata,
         };
@@ -269,6 +290,10 @@ struct DecoderCtx {
     swr_ctx: *mut ffi::SwrContext,
     /// Reservado para PTS de audio alineado al stream; hoy el PCM va a rodio sin marca temporal aquí.
     _audio_time_base: ffi::AVRational,
+    target_sample_rate: i32,
+    target_channels: i32,
+    audio_scratch: *mut u8,
+    audio_scratch_cap: i32,
 }
 
 impl Drop for DecoderCtx {
@@ -292,11 +317,14 @@ impl Drop for DecoderCtx {
             if !self.swr_ctx.is_null() {
                 ffi::swr_free(&mut self.swr_ctx);
             }
+            if !self.audio_scratch.is_null() {
+                ffi::av_freep(&mut self.audio_scratch as *mut _ as *mut _);
+            }
         }
     }
 }
 
-fn open_decoder(path: &str) -> Result<DecoderCtx> {
+fn open_decoder(path: &str, target_sample_rate: i32, target_channels: i32) -> Result<DecoderCtx> {
     let c_path = CString::new(path)?;
     unsafe {
         let mut fmt_ctx: *mut ffi::AVFormatContext = ptr::null_mut();
@@ -410,13 +438,13 @@ fn open_decoder(path: &str) -> Result<DecoderCtx> {
                         swr_ctx = ffi::swr_alloc();
 
                         let mut out_ch_layout: ffi::AVChannelLayout = std::mem::zeroed();
-                        ffi::av_channel_layout_default(&mut out_ch_layout, 2);
+                        ffi::av_channel_layout_default(&mut out_ch_layout, target_channels);
 
                         let ret = ffi::swr_alloc_set_opts2(
                             &mut swr_ctx,
                             &out_ch_layout,
                             ffi::AVSampleFormat::AV_SAMPLE_FMT_FLT,
-                            44100,
+                            target_sample_rate,
                             &(*a_par).ch_layout,
                             std::mem::transmute((*a_par).format),
                             (*a_par).sample_rate,
@@ -426,6 +454,11 @@ fn open_decoder(path: &str) -> Result<DecoderCtx> {
 
                         if ret >= 0 {
                             ffi::swr_init(swr_ctx);
+                            log::info!(
+                                "SWR ctx initialized: out {} Hz, {} ch",
+                                target_sample_rate,
+                                target_channels
+                            );
                         } else {
                             log::warn!("Failed to init SwrContext, audio disabled.");
                             ffi::swr_free(&mut swr_ctx);
@@ -457,17 +490,23 @@ fn open_decoder(path: &str) -> Result<DecoderCtx> {
             audio_codec_ctx,
             swr_ctx,
             _audio_time_base: audio_time_base,
+            target_sample_rate,
+            target_channels,
+            audio_scratch: ptr::null_mut(),
+            audio_scratch_cap: 0,
         })
     }
 }
 
 fn decoder_loop(
     path: &str,
+    target_sample_rate: i32,
+    target_channels: i32,
     cmd_rx: Receiver<DecoderCommand>,
     frame_tx: Sender<VideoFrame>,
     audio_tx: Sender<AudioFrame>,
 ) -> Result<()> {
-    let mut ctx = open_decoder(path)?;
+    let mut ctx = open_decoder(path, target_sample_rate, target_channels)?;
     log::info!(
         "Decoder open: '{path}' {}×{} @ {:.2}fps",
         ctx.width,
@@ -477,7 +516,7 @@ fn decoder_loop(
 
     let mut is_playing = false;
     let mut current_pts: i64 = 0;
-    let frame_dur = if ctx.fps > 0.0 {
+    let _frame_dur = if ctx.fps > 0.0 {
         secs_to_pts(1.0 / ctx.fps, ctx.time_base)
     } else {
         1
@@ -504,7 +543,7 @@ fn decoder_loop(
                     DecoderCommand::Pause => {
                         pending_play_state = Some(false);
                     }
-                    DecoderCommand::StepForward | DecoderCommand::StepBack => {
+                    DecoderCommand::StepForward => {
                         // Process pending Seek/Play/Pause before this step
                         if let Some(secs) = pending_seek.take() {
                             handle_cmd(
@@ -514,23 +553,20 @@ fn decoder_loop(
                                 &audio_tx,
                                 &mut is_playing,
                                 &mut current_pts,
-                                frame_dur,
                             )?;
                         }
                         if let Some(play) = pending_play_state.take() {
-                            let state_cmd = if play {
-                                DecoderCommand::Play
-                            } else {
-                                DecoderCommand::Pause
-                            };
                             handle_cmd(
-                                state_cmd,
+                                if play {
+                                    DecoderCommand::Play
+                                } else {
+                                    DecoderCommand::Pause
+                                },
                                 &mut ctx,
                                 &frame_tx,
                                 &audio_tx,
                                 &mut is_playing,
                                 &mut current_pts,
-                                frame_dur,
                             )?;
                         }
                         handle_cmd(
@@ -540,7 +576,6 @@ fn decoder_loop(
                             &audio_tx,
                             &mut is_playing,
                             &mut current_pts,
-                            frame_dur,
                         )?;
                         if !is_playing {
                             pending_frame = None;
@@ -556,7 +591,6 @@ fn decoder_loop(
                             &audio_tx,
                             &mut is_playing,
                             &mut current_pts,
-                            frame_dur,
                         )?;
                         if !is_playing {
                             pending_frame = None;
@@ -572,7 +606,6 @@ fn decoder_loop(
                     &audio_tx,
                     &mut is_playing,
                     &mut current_pts,
-                    frame_dur,
                 )?;
                 if !is_playing {
                     pending_frame = None;
@@ -591,7 +624,6 @@ fn decoder_loop(
                     &audio_tx,
                     &mut is_playing,
                     &mut current_pts,
-                    frame_dur,
                 )?;
             }
 
@@ -623,7 +655,7 @@ fn decoder_loop(
                         pending_frame = Some(f); // Put it back
                         if let Ok(cmd) = msg {
                             log::trace!("Decoder received command: {:?}", cmd);
-                            handle_cmd(cmd, &mut ctx, &frame_tx, &audio_tx, &mut is_playing, &mut current_pts, frame_dur)?;
+                            handle_cmd(cmd, &mut ctx, &frame_tx, &audio_tx, &mut is_playing, &mut current_pts)?;
                             if !is_playing { pending_frame = None; }
                         } else {
                             log::warn!("Decoder thread exiting: Command channel disconnected");
@@ -643,7 +675,6 @@ fn decoder_loop(
                         &audio_tx,
                         &mut is_playing,
                         &mut current_pts,
-                        frame_dur,
                     )?;
                 } else {
                     log::warn!("Decoder thread exiting (idle): Command channel disconnected");
@@ -661,7 +692,6 @@ unsafe fn handle_cmd(
     audio_tx: &Sender<AudioFrame>,
     is_playing: &mut bool,
     current_pts: &mut i64,
-    frame_dur: i64,
 ) -> Result<()> {
     match &cmd {
         DecoderCommand::Play => {
@@ -698,13 +728,6 @@ unsafe fn handle_cmd(
             }
             ffi::av_packet_free(&mut (packet as *mut _));
             ffi::av_frame_free(&mut (frame as *mut _));
-        }
-        DecoderCommand::StepBack => {
-            trace_log::log("Decoder: StepBack");
-            *is_playing = false;
-            let back = (*current_pts - frame_dur * 2).max(0);
-            seek_exact(ctx, back, frame_tx, &audio_tx)?;
-            *current_pts = back;
         }
         DecoderCommand::SetVolume(_) => {}
     }
@@ -881,14 +904,14 @@ unsafe fn convert_frame(
 
     Ok(VideoFrame {
         pts,
-        rgba_data,
+        rgba_data: rgba_data.into(),
         width: w,
         height: h,
     })
 }
 
 unsafe fn convert_audio_frame(
-    ctx: &DecoderCtx,
+    ctx: &mut DecoderCtx,
     frame: *mut ffi::AVFrame,
 ) -> Result<Option<AudioFrame>> {
     if ctx.swr_ctx.is_null() {
@@ -899,40 +922,42 @@ unsafe fn convert_audio_frame(
     // Calculate out samples (allowing up to 10% more for resampling drift)
     let out_samples_cap = ffi::swr_get_out_samples(ctx.swr_ctx, nb_samples);
 
-    let mut out_samples_data: *mut u8 = ptr::null_mut();
-    ffi::av_samples_alloc(
-        &mut out_samples_data,
-        ptr::null_mut(),
-        2, // stereo
-        out_samples_cap,
-        ffi::AVSampleFormat::AV_SAMPLE_FMT_FLT,
-        0,
-    );
+    if ctx.audio_scratch_cap < out_samples_cap {
+        if !ctx.audio_scratch.is_null() {
+            ffi::av_freep(&mut ctx.audio_scratch as *mut _ as *mut _);
+        }
+        ffi::av_samples_alloc(
+            &mut ctx.audio_scratch,
+            ptr::null_mut(),
+            ctx.target_channels,
+            out_samples_cap,
+            ffi::AVSampleFormat::AV_SAMPLE_FMT_FLT,
+            0,
+        );
+        ctx.audio_scratch_cap = out_samples_cap;
+    }
 
     let out_samples_count = ffi::swr_convert(
         ctx.swr_ctx,
-        &mut out_samples_data,
+        &mut ctx.audio_scratch,
         out_samples_cap,
         (*frame).data.as_ptr() as *mut *const u8,
         nb_samples,
     );
 
     if out_samples_count < 0 {
-        ffi::av_freep(&mut out_samples_data as *mut _ as *mut _);
         return Err(anyhow!("swr_convert failed"));
     }
 
-    let byte_size = out_samples_count as usize * 2 * 4; // count * channels * sizeof(f32)
-    let slice = std::slice::from_raw_parts(out_samples_data as *const f32, byte_size / 4);
+    let byte_size = out_samples_count as usize * ctx.target_channels as usize * 4; // count * channels * sizeof(f32)
+    let slice = std::slice::from_raw_parts(ctx.audio_scratch as *const f32, byte_size / 4);
     let mut samples = Vec::with_capacity(slice.len());
     samples.extend_from_slice(slice);
 
-    ffi::av_freep(&mut out_samples_data as *mut _ as *mut _);
-
     Ok(Some(AudioFrame {
         samples,
-        channels: 2,
-        sample_rate: 44100,
+        channels: ctx.target_channels as u16,
+        sample_rate: ctx.target_sample_rate as u32,
     }))
 }
 
@@ -940,21 +965,21 @@ unsafe fn convert_audio_frame(
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn pts_to_secs(pts: i64, tb: ffi::AVRational) -> f64 {
+pub(crate) fn pts_to_secs(pts: i64, tb: ffi::AVRational) -> f64 {
     if tb.den == 0 {
         return 0.0;
     }
     pts as f64 * tb.num as f64 / tb.den as f64
 }
 
-fn secs_to_pts(secs: f64, tb: ffi::AVRational) -> i64 {
-    if tb.num == 0 {
+pub(crate) fn secs_to_pts(secs: f64, tb: ffi::AVRational) -> i64 {
+    if tb.den == 0 {
         return 0;
     }
     (secs * tb.den as f64 / tb.num as f64) as i64
 }
 
-unsafe fn find_video_stream(streams: &[*mut ffi::AVStream]) -> i32 {
+pub(crate) unsafe fn find_video_stream(streams: &[*mut ffi::AVStream]) -> i32 {
     for (idx, &stream) in streams.iter().enumerate() {
         if (*(*stream).codecpar).codec_type == ffi::AVMediaType::AVMEDIA_TYPE_VIDEO {
             return idx as i32;
@@ -1002,14 +1027,39 @@ fn color_primaries_str(prim: ffi::AVColorPrimaries) -> String {
     }
 }
 
-fn av_err(code: i32) -> String {
-    let mut buf = [0i8; 256];
+pub(crate) fn av_err(code: i32) -> String {
+    let mut buf = vec![0u8; ffi::AV_ERROR_MAX_STRING_SIZE as usize];
     unsafe {
-        ffi::av_strerror(code, buf.as_mut_ptr(), buf.len());
+        ffi::av_strerror(code, buf.as_mut_ptr() as *mut i8, buf.len());
+        let s = CStr::from_ptr(buf.as_ptr() as *const i8);
+        s.to_string_lossy().into_owned()
     }
-    let s = unsafe { CStr::from_ptr(buf.as_ptr()) };
-    s.to_string_lossy().into_owned()
 }
 
 // SAFETY: AVFormatContext, AVCodecContext etc. pointers are only used on the decoder thread.
 unsafe impl Send for DecoderCtx {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_pts_to_secs() {
+        let tb = ffi::AVRational { num: 1, den: 1000 };
+        assert_eq!(pts_to_secs(500, tb), 0.5);
+        assert_eq!(pts_to_secs(0, tb), 0.0);
+
+        let tb_zero = ffi::AVRational { num: 1, den: 0 };
+        assert_eq!(pts_to_secs(100, tb_zero), 0.0);
+    }
+
+    #[test]
+    fn test_secs_to_pts() {
+        let tb = ffi::AVRational { num: 1, den: 1000 };
+        assert_eq!(secs_to_pts(0.5, tb), 500);
+        assert_eq!(secs_to_pts(0.0, tb), 0);
+
+        let tb_zero = ffi::AVRational { num: 1, den: 0 };
+        assert_eq!(secs_to_pts(1.0, tb_zero), 0);
+    }
+}

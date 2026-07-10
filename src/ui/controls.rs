@@ -83,480 +83,504 @@ pub fn show_menu_bar(ui: &mut Ui, app: &mut DiffPlayerApp) {
     egui::menu::bar(ui, |ui| {
         // ── Dropdown menus ──────────────────────────────────────────────────
 
-        ui.menu_button(
-            tr(lang, "Archivo", "File", "Parma"),
-            |ui| {
-                if ui
-                    .button(tr(
-                        lang,
-                        "Abrir VÍDEO A…",
-                        "Open VIDEO A…",
-                        "Panya VÍDEO A…",
-                    ))
-                    .clicked()
-                {
-                    app.open_video_a(ui.ctx());
-                    ui.close_menu();
-                }
+        ui.menu_button(tr(lang, "Archivo", "File", "Parma"), |ui| {
+            if ui
+                .button(tr(
+                    lang,
+                    "Abrir VÍDEO A…",
+                    "Open VIDEO A…",
+                    "Panya VÍDEO A…",
+                ))
+                .clicked()
+            {
+                app.open_video_a(ui.ctx());
+                ui.close_menu();
+            }
 
-                if ui
-                    .button(tr(
-                        lang,
-                        "Abrir VÍDEO B…",
-                        "Open VIDEO B…",
-                        "Panya VÍDEO B…",
-                    ))
-                    .clicked()
-                {
-                    app.open_video_b(ui.ctx());
-                    ui.close_menu();
-                }
+            if ui
+                .button(tr(
+                    lang,
+                    "Abrir VÍDEO B…",
+                    "Open VIDEO B…",
+                    "Panya VÍDEO B…",
+                ))
+                .clicked()
+            {
+                app.open_video_b(ui.ctx());
+                ui.close_menu();
+            }
 
-                if ui
-                    .button(tr(
-                        lang,
-                        "Abrir secuencia EXR (A)…",
-                        "Open EXR sequence (A)…",
-                        "Panya EXR sequence (A)…",
-                    ))
-                    .clicked()
+            ui.separator();
+
+            if ui
+                .button(tr(
+                    lang,
+                    "Cargar sesión (.dpqc)…",
+                    "Load Session (.dpqc)…",
+                    "Load Session (.dpqc)…",
+                ))
+                .clicked()
+            {
+                app.load_session(ui.ctx());
+                ui.close_menu();
+            }
+
+            if ui
+                .button(tr(
+                    lang,
+                    "Guardar sesión (.dpqc)…",
+                    "Save Session (.dpqc)…",
+                    "Save Session (.dpqc)…",
+                ))
+                .clicked()
+            {
+                app.save_session();
+                ui.close_menu();
+            }
+
+            if ui
+                .button(tr(
+                    lang,
+                    "Exportar marcadores a CSV…",
+                    "Export markers to CSV…",
+                    "Export markers to CSV…",
+                ))
+                .clicked()
+            {
+                app.export_csv();
+                ui.close_menu();
+            }
+
+            ui.separator();
+
+            if ui
+                .button(tr(
+                    lang,
+                    "Abrir secuencia EXR (A)…",
+                    "Open EXR sequence (A)…",
+                    "Panya EXR sequence (A)…",
+                ))
+                .clicked()
+            {
+                if let Some(folder) = rfd::FileDialog::new().pick_folder() {
+                    app.start_proxy_from_exr_input_dir(folder, Channel::A, ui.ctx());
+                }
+                ui.close_menu();
+            }
+            if ui
+                .button(tr(
+                    lang,
+                    "Abrir secuencia EXR (B)…",
+                    "Open EXR sequence (B)…",
+                    "Panya EXR sequence (B)…",
+                ))
+                .clicked()
+            {
+                if let Some(folder) = rfd::FileDialog::new().pick_folder() {
+                    app.start_proxy_from_exr_input_dir(folder, Channel::B, ui.ctx());
+                }
+                ui.close_menu();
+            }
+            if ui
+                .button(tr(
+                    lang,
+                    "Abrir archivos EXR (A)…",
+                    "Open EXR files (A)…",
+                    "Panya EXR files (A)…",
+                ))
+                .clicked()
+            {
+                if let Some(files) = rfd::FileDialog::new()
+                    .add_filter("EXR", &["exr"])
+                    .pick_files()
                 {
-                    if let Some(folder) = rfd::FileDialog::new().pick_folder() {
-                        app.start_proxy_from_exr_input_dir(folder, Channel::A, ui.ctx());
+                    if !files.is_empty() {
+                        app.start_proxy_from_exr_input_files(files, Channel::A, ui.ctx());
                     }
-                    ui.close_menu();
                 }
-                if ui
-                    .button(tr(
-                        lang,
-                        "Abrir secuencia EXR (B)…",
-                        "Open EXR sequence (B)…",
-                        "Panya EXR sequence (B)…",
-                    ))
-                    .clicked()
+                ui.close_menu();
+            }
+            if ui
+                .button(tr(
+                    lang,
+                    "Abrir archivos EXR (B)…",
+                    "Open EXR files (B)…",
+                    "Panya EXR files (B)…",
+                ))
+                .clicked()
+            {
+                if let Some(files) = rfd::FileDialog::new()
+                    .add_filter("EXR", &["exr"])
+                    .pick_files()
                 {
-                    if let Some(folder) = rfd::FileDialog::new().pick_folder() {
-                        app.start_proxy_from_exr_input_dir(folder, Channel::B, ui.ctx());
+                    if !files.is_empty() {
+                        app.start_proxy_from_exr_input_files(files, Channel::B, ui.ctx());
                     }
-                    ui.close_menu();
                 }
-                if ui
-                    .button(tr(
-                        lang,
-                        "Abrir archivos EXR (A)…",
-                        "Open EXR files (A)…",
-                        "Panya EXR files (A)…",
-                    ))
-                    .clicked()
-                {
-                    if let Some(files) = rfd::FileDialog::new()
-                        .add_filter("EXR", &["exr"])
-                        .pick_files()
-                    {
-                        if !files.is_empty() {
-                            app.start_proxy_from_exr_input_files(files, Channel::A, ui.ctx());
-                        }
-                    }
-                    ui.close_menu();
-                }
-                if ui
-                    .button(tr(
-                        lang,
-                        "Abrir archivos EXR (B)…",
-                        "Open EXR files (B)…",
-                        "Panya EXR files (B)…",
-                    ))
-                    .clicked()
-                {
-                    if let Some(files) = rfd::FileDialog::new()
-                        .add_filter("EXR", &["exr"])
-                        .pick_files()
-                    {
-                        if !files.is_empty() {
-                            app.start_proxy_from_exr_input_files(files, Channel::B, ui.ctx());
-                        }
-                    }
-                    ui.close_menu();
-                }
+                ui.close_menu();
+            }
 
-                ui.separator();
-                if ui
-                    .button(tr(
-                        lang,
-                        "Guardar Frame como PNG  (F)",
-                        "Save Frame as PNG  (F)",
-                        "Marta Frame ve PNG  (F)",
-                    ))
-                    .clicked()
-                {
-                    ui.ctx()
-                        .send_viewport_cmd(egui::ViewportCommand::Screenshot);
-                    ui.close_menu();
-                }
+            ui.separator();
+            if ui
+                .button(tr(
+                    lang,
+                    "Guardar Frame como PNG  (F)",
+                    "Save Frame as PNG  (F)",
+                    "Marta Frame ve PNG  (F)",
+                ))
+                .clicked()
+            {
+                ui.ctx()
+                    .send_viewport_cmd(egui::ViewportCommand::Screenshot);
+                ui.close_menu();
+            }
 
-                if ui
-                    .button(tr(
-                        lang,
-                        "Elegir carpeta de capturas…",
-                        "Set Screenshot Folder…",
-                        "Cilta Screenshot Nómë…",
-                    ))
-                    .clicked()
-                {
-                    if let Some(folder) = rfd::FileDialog::new().pick_folder() {
-                        app.view_mut().screenshot_dir = Some(folder);
-                    }
-                    ui.close_menu();
+            if ui
+                .button(tr(
+                    lang,
+                    "Elegir carpeta de capturas…",
+                    "Set Screenshot Folder…",
+                    "Cilta Screenshot Nómë…",
+                ))
+                .clicked()
+            {
+                if let Some(folder) = rfd::FileDialog::new().pick_folder() {
+                    app.view_mut().screenshot_dir = Some(folder);
                 }
-                ui.separator();
-                if ui
-                    .button(tr(lang, "Salir  (Esc)", "Quit  (Esc)", "Vanya  (Esc)"))
-                    .clicked()
-                {
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-                }
-            },
-        );
+                ui.close_menu();
+            }
+            ui.separator();
+            if ui
+                .button(tr(lang, "Salir  (Esc)", "Quit  (Esc)", "Vanya  (Esc)"))
+                .clicked()
+            {
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+        });
 
-        ui.menu_button(
-            tr(lang, "Vista", "View", "Cén"),
-            |ui| {
-                if ui
-                    .button(tr(
-                        lang,
-                        "Ocultar/Mostrar Interfaz  (3)",
-                        "Toggle HUD  (3)",
-                        "Halya/Tanë HUD  (3)",
-                    ))
-                    .clicked()
-                {
-                    let v = app.view().show_hud;
-                    app.view_mut().show_hud = !v;
-                    ui.close_menu();
-                }
-                ui.separator();
-                let mut left = app.view().show_left_panel;
-                if ui
-                    .checkbox(
-                        &mut left,
-                        tr(
-                            lang,
-                            "Barra izquierda (datos del vídeo)",
-                            "Left panel (video data)",
-                            "Parma left (video data)",
-                        ),
-                    )
-                    .changed()
-                {
-                    app.view_mut().show_left_panel = left;
-                    ui.close_menu();
-                }
-                let mut right = app.view().show_right_panel;
-                if ui
-                    .checkbox(
-                        &mut right,
-                        tr(
-                            lang,
-                            "Barra derecha (controles y audio)",
-                            "Right panel (controls & audio)",
-                            "Parma right (controls & audio)",
-                        ),
-                    )
-                    .changed()
-                {
-                    app.view_mut().show_right_panel = right;
-                    ui.close_menu();
-                }
-                ui.separator();
-                if ui
-                    .button(tr(
-                        lang,
-                        "Restaurar Zoom  (R)",
-                        "Reset Zoom  (R)",
-                        "En-panya Zoom  (R)",
-                    ))
-                    .clicked()
-                {
-                    app.view_mut().zoom = 1.0;
-                    app.view_mut().pan_u = 0.0;
-                    app.view_mut().pan_v = 0.0;
-                    ui.close_menu();
-                }
-                if ui
-                    .button(tr(lang, "Zoom 50%  (5)", "Zoom 50%  (5)", "Zoom 50%  (5)"))
-                    .clicked()
-                {
-                    app.view_mut().zoom = 0.5;
-                    ui.close_menu();
-                }
-                if ui
-                    .button(tr(
-                        lang,
-                        "Zoom 100%  (6)",
-                        "Zoom 100%  (6)",
-                        "Zoom 100%  (6)",
-                    ))
-                    .clicked()
-                {
-                    app.view_mut().zoom = 1.0;
-                    ui.close_menu();
-                }
-                if ui
-                    .button(tr(
-                        lang,
-                        "Zoom 200%  (7)",
-                        "Zoom 200%  (7)",
-                        "Zoom 200%  (7)",
-                    ))
-                    .clicked()
-                {
-                    app.view_mut().zoom = 2.0;
-                    ui.close_menu();
-                }
-                if ui
-                    .button(tr(
-                        lang,
-                        "Zoom 400%  (8)",
-                        "Zoom 400%  (8)",
-                        "Zoom 400%  (8)",
-                    ))
-                    .clicked()
-                {
-                    app.view_mut().zoom = 4.0;
-                    ui.close_menu();
-                }
-                if ui
-                    .button(tr(
-                        lang,
-                        "Zoom 800%  (9)",
-                        "Zoom 800%  (9)",
-                        "Zoom 800%  (9)",
-                    ))
-                    .clicked()
-                {
-                    app.view_mut().zoom = 8.0;
-                    ui.close_menu();
-                }
-            },
-        );
-
-        ui.menu_button(
-            tr(lang, "Reproducción", "Playback", "Lirë"),
-            |ui| {
-                let is_p = app.playback().is_playing;
-                if ui
-                    .button(if is_p {
-                        tr(lang, "Pausar  (Espacio)", "Pause  (Space)", "Talta  (Espacio)")
-                    } else {
-                        tr(
-                            lang,
-                            "Reproducir  (Espacio)",
-                            "Play  (Space)",
-                            "Lir  (Espacio)",
-                        )
-                    })
-                    .clicked()
-                {
-                    if is_p {
-                        app.do_pause(ui.ctx());
-                    } else {
-                        app.do_play(ui.ctx());
-                    }
-                    ui.close_menu();
-                }
-                if ui
-                    .button(tr(
-                        lang,
-                        "Retroceder Frame (Izquierda / Left)",
-                        "Step Backward (Left)",
-                        "Nánë Frame (Left)",
-                    ))
-                    .clicked()
-                {
-                    app.do_step_bck(ui.ctx());
-                    ui.close_menu();
-                }
-                if ui
-                    .button(tr(
-                        lang,
-                        "Avanzar Frame (Derecha / Right)",
-                        "Step Forward (Right)",
-                        "Pónë Frame (Right)",
-                    ))
-                    .clicked()
-                {
-                    app.do_step_fwd(ui.ctx());
-                    ui.close_menu();
-                }
-                if ui
-                    .button(tr(
-                        lang,
-                        "Ir al inicio  (Home)",
-                        "Go to Start  (Home)",
-                        "Mena Yessë  (Home)",
-                    ))
-                    .clicked()
-                {
-                    app.do_seek(0.0, ui.ctx());
-                    ui.close_menu();
-                }
-            },
-        );
-
-        ui.menu_button(
-            tr(lang, "Opciones", "Options", "Cilmë"),
-            |ui| {
-                if ui
-                    .button(tr(
-                        lang,
-                        "Intercambiar A y B  (S)",
-                        "Swap A and B  (S)",
-                        "Quista A ar B  (S)",
-                    ))
-                    .clicked()
-                {
-                    app.swap_videos(ui.ctx());
-                    ui.close_menu();
-                }
-
-                ui.separator();
-
-                // Canvas background colour
-                ui.horizontal(|ui| {
-                    ui.label(tr(lang, "Color fondo:", "Canvas color:", "Talan cala:"));
-                    let mut bg = app.view().canvas_bg_color;
-                    if ui.color_edit_button_rgb(&mut bg).changed() {
-                        app.view_mut().canvas_bg_color = bg;
-                    }
-                });
-
-                ui.separator();
-                ui.menu_button(
+        ui.menu_button(tr(lang, "Vista", "View", "Cén"), |ui| {
+            if ui
+                .button(tr(
+                    lang,
+                    "Ocultar/Mostrar Interfaz  (3)",
+                    "Toggle HUD  (3)",
+                    "Halya/Tanë HUD  (3)",
+                ))
+                .clicked()
+            {
+                let v = app.view().show_hud;
+                app.view_mut().show_hud = !v;
+                ui.close_menu();
+            }
+            ui.separator();
+            let mut left = app.view().show_left_panel;
+            if ui
+                .checkbox(
+                    &mut left,
                     tr(
                         lang,
-                        "Idioma / Language",
-                        "Language / Idioma",
-                        "Lambë",
+                        "Barra izquierda (datos del vídeo)",
+                        "Left panel (video data)",
+                        "Parma left (video data)",
                     ),
-                    |ui| {
-                        if ui
-                            .radio_value(&mut app.view_mut().lang, Language::En, "English")
-                            .clicked()
-                        {
-                            ui.close_menu();
-                        }
-                        if ui
-                            .radio_value(&mut app.view_mut().lang, Language::Es, "Español")
-                            .clicked()
-                        {
-                            ui.close_menu();
-                        }
-                        if ui
-                            .radio_value(
-                                &mut app.view_mut().lang,
-                                Language::Quenya,
-                                "Quenya (Elvish)",
-                            )
-                            .clicked()
-                        {
-                            ui.close_menu();
-                        }
-                    },
-                );
-                ui.menu_button(
-                    tr(lang, "Tema / Theme", "Theme / Tema", "Cala"),
-                    |ui| {
-                        let mut current_theme = app.view().theme;
-                        egui::ScrollArea::vertical()
-                            .max_height(400.0)
-                            .show(ui, |ui| {
-                                for &(theme_val, name) in THEME_MENU_CHOICES {
-                                    if ui
-                                        .radio_value(&mut current_theme, theme_val, name)
-                                        .clicked()
-                                    {
-                                        app.view_mut().theme = theme_val;
-                                        apply_theme(ui.ctx(), theme_val);
-                                        ui.close_menu();
-                                    }
-                                }
-                            });
-                    },
-                );
-            },
-        );
+                )
+                .changed()
+            {
+                app.view_mut().show_left_panel = left;
+                ui.close_menu();
+            }
+            let mut right = app.view().show_right_panel;
+            if ui
+                .checkbox(
+                    &mut right,
+                    tr(
+                        lang,
+                        "Barra derecha (controles y audio)",
+                        "Right panel (controls & audio)",
+                        "Parma right (controls & audio)",
+                    ),
+                )
+                .changed()
+            {
+                app.view_mut().show_right_panel = right;
+                ui.close_menu();
+            }
+            ui.separator();
+            if ui
+                .button(tr(
+                    lang,
+                    "Restaurar Zoom  (R)",
+                    "Reset Zoom  (R)",
+                    "En-panya Zoom  (R)",
+                ))
+                .clicked()
+            {
+                app.view_mut().zoom = 1.0;
+                app.view_mut().pan_u = 0.0;
+                app.view_mut().pan_v = 0.0;
+                ui.close_menu();
+            }
+            if ui
+                .button(tr(lang, "Zoom 50%  (5)", "Zoom 50%  (5)", "Zoom 50%  (5)"))
+                .clicked()
+            {
+                app.view_mut().zoom = 0.5;
+                ui.close_menu();
+            }
+            if ui
+                .button(tr(
+                    lang,
+                    "Zoom 100%  (6)",
+                    "Zoom 100%  (6)",
+                    "Zoom 100%  (6)",
+                ))
+                .clicked()
+            {
+                app.view_mut().zoom = 1.0;
+                ui.close_menu();
+            }
+            if ui
+                .button(tr(
+                    lang,
+                    "Zoom 200%  (7)",
+                    "Zoom 200%  (7)",
+                    "Zoom 200%  (7)",
+                ))
+                .clicked()
+            {
+                app.view_mut().zoom = 2.0;
+                ui.close_menu();
+            }
+            if ui
+                .button(tr(
+                    lang,
+                    "Zoom 400%  (8)",
+                    "Zoom 400%  (8)",
+                    "Zoom 400%  (8)",
+                ))
+                .clicked()
+            {
+                app.view_mut().zoom = 4.0;
+                ui.close_menu();
+            }
+            if ui
+                .button(tr(
+                    lang,
+                    "Zoom 800%  (9)",
+                    "Zoom 800%  (9)",
+                    "Zoom 800%  (9)",
+                ))
+                .clicked()
+            {
+                app.view_mut().zoom = 8.0;
+                ui.close_menu();
+            }
+        });
 
-        ui.menu_button(
-            tr(lang, "Emisión", "Broadcast", "Sirë"),
-            |ui| {
-                let mut enabled = app.view().show_clean_feed_window;
-                if ui
-                    .checkbox(
-                        &mut enabled,
-                        tr(
-                            lang,
-                            "Ventana de Salida  (OBS)",
-                            "Clean Feed Window  (OBS)",
-                            "Vëa Cén  (OBS)",
-                        ),
+        ui.menu_button(tr(lang, "Reproducción", "Playback", "Lirë"), |ui| {
+            let is_p = app.playback().is_playing;
+            if ui
+                .button(if is_p {
+                    tr(
+                        lang,
+                        "Pausar  (Espacio)",
+                        "Pause  (Space)",
+                        "Talta  (Espacio)",
                     )
-                    .clicked()
-                {
-                    app.view_mut().show_clean_feed_window = enabled;
-                    ui.close_menu();
+                } else {
+                    tr(
+                        lang,
+                        "Reproducir  (Espacio)",
+                        "Play  (Space)",
+                        "Lir  (Espacio)",
+                    )
+                })
+                .clicked()
+            {
+                if is_p {
+                    app.do_pause(ui.ctx());
+                } else {
+                    app.do_play(ui.ctx());
                 }
-                ui.label(RichText::new(tr(
+                ui.close_menu();
+            }
+            if ui
+                .button(tr(
+                    lang,
+                    "Retroceder Frame (Izquierda / Left)",
+                    "Step Backward (Left)",
+                    "Nánë Frame (Left)",
+                ))
+                .clicked()
+            {
+                app.do_step_bck(ui.ctx());
+                ui.close_menu();
+            }
+            if ui
+                .button(tr(
+                    lang,
+                    "Avanzar Frame (Derecha / Right)",
+                    "Step Forward (Right)",
+                    "Pónë Frame (Right)",
+                ))
+                .clicked()
+            {
+                app.do_step_fwd(ui.ctx());
+                ui.close_menu();
+            }
+            if ui
+                .button(tr(
+                    lang,
+                    "Ir al inicio  (Home)",
+                    "Go to Start  (Home)",
+                    "Mena Yessë  (Home)",
+                ))
+                .clicked()
+            {
+                app.do_seek(0.0, ui.ctx());
+                ui.close_menu();
+            }
+        });
+
+        ui.menu_button(tr(lang, "Opciones", "Options", "Cilmë"), |ui| {
+            if ui
+                .button(tr(
+                    lang,
+                    "Intercambiar A y B  (S)",
+                    "Swap A and B  (S)",
+                    "Quista A ar B  (S)",
+                ))
+                .clicked()
+            {
+                app.swap_videos(ui.ctx());
+                ui.close_menu();
+            }
+
+            ui.separator();
+
+            // Canvas background colour
+            ui.horizontal(|ui| {
+                ui.label(tr(lang, "Color fondo:", "Canvas color:", "Talan cala:"));
+                let mut bg = app.view().canvas_bg_color;
+                if ui.color_edit_button_rgb(&mut bg).changed() {
+                    app.view_mut().canvas_bg_color = bg;
+                }
+            });
+
+            ui.separator();
+            ui.menu_button(
+                tr(lang, "Idioma / Language", "Language / Idioma", "Lambë"),
+                |ui| {
+                    if ui
+                        .radio_value(&mut app.view_mut().lang, Language::En, "English")
+                        .clicked()
+                    {
+                        ui.close_menu();
+                    }
+                    if ui
+                        .radio_value(&mut app.view_mut().lang, Language::Es, "Español")
+                        .clicked()
+                    {
+                        ui.close_menu();
+                    }
+                    if ui
+                        .radio_value(
+                            &mut app.view_mut().lang,
+                            Language::Quenya,
+                            "Quenya (Elvish)",
+                        )
+                        .clicked()
+                    {
+                        ui.close_menu();
+                    }
+                },
+            );
+            ui.menu_button(tr(lang, "Tema / Theme", "Theme / Tema", "Cala"), |ui| {
+                let mut current_theme = app.view().theme;
+                egui::ScrollArea::vertical()
+                    .max_height(400.0)
+                    .show(ui, |ui| {
+                        for &(theme_val, name) in THEME_MENU_CHOICES {
+                            if ui
+                                .radio_value(&mut current_theme, theme_val, name)
+                                .clicked()
+                            {
+                                app.view_mut().theme = theme_val;
+                                apply_theme(ui.ctx(), theme_val);
+                                ui.close_menu();
+                            }
+                        }
+                    });
+            });
+        });
+
+        ui.menu_button(tr(lang, "Emisión", "Broadcast", "Sirë"), |ui| {
+            let mut enabled = app.view().show_clean_feed_window;
+            if ui
+                .checkbox(
+                    &mut enabled,
+                    tr(
+                        lang,
+                        "Ventana de Salida  (OBS)",
+                        "Clean Feed Window  (OBS)",
+                        "Vëa Cén  (OBS)",
+                    ),
+                )
+                .clicked()
+            {
+                app.view_mut().show_clean_feed_window = enabled;
+                ui.close_menu();
+            }
+            ui.label(
+                RichText::new(tr(
                     lang,
                     "Capturar ventana en OBS",
                     "Capture window in OBS",
                     "Mapa vëa mi OBS",
                 ))
                 .weak()
-                .size(FONT_LABEL));
-                ui.separator();
-                ui.label(RichText::new(tr(
-                    lang,
-                    "Zonas seguras",
-                    "Safe Zones",
-                    "Safe zones",
-                ))
-                .weak()
-                .size(FONT_LABEL));
-                let mut safe_zone = app.view().safe_zone;
-                if ui
-                    .radio_value(
-                        &mut safe_zone,
-                        SafeZoneMode::None,
-                        tr(lang, "Desactivado", "Off", "Off"),
-                    )
-                    .clicked()
-                {
-                    ui.close_menu();
-                }
-                if ui
-                    .radio_value(&mut safe_zone, SafeZoneMode::TvEbu, "TV: EBU R95 (16:9)")
-                    .clicked()
-                {
-                    ui.close_menu();
-                }
-                if ui
-                    .radio_value(
-                        &mut safe_zone,
-                        SafeZoneMode::Social,
-                        tr(
-                            lang,
-                            "Móvil: Redes Sociales (9:16)",
-                            "Mobile: Social (9:16)",
-                            "Social (9:16)",
-                        ),
-                    )
-                    .clicked()
-                {
-                    ui.close_menu();
-                }
-                app.view_mut().safe_zone = safe_zone;
-            },
-        );
+                .size(FONT_LABEL),
+            );
+            ui.separator();
+            ui.label(
+                RichText::new(tr(lang, "Zonas seguras", "Safe Zones", "Safe zones"))
+                    .weak()
+                    .size(FONT_LABEL),
+            );
+            let mut safe_zone = app.view().safe_zone;
+            if ui
+                .radio_value(
+                    &mut safe_zone,
+                    SafeZoneMode::None,
+                    tr(lang, "Desactivado", "Off", "Off"),
+                )
+                .clicked()
+            {
+                ui.close_menu();
+            }
+            if ui
+                .radio_value(&mut safe_zone, SafeZoneMode::TvEbu, "TV: EBU R95 (16:9)")
+                .clicked()
+            {
+                ui.close_menu();
+            }
+            if ui
+                .radio_value(
+                    &mut safe_zone,
+                    SafeZoneMode::Social,
+                    tr(
+                        lang,
+                        "Móvil: Redes Sociales (9:16)",
+                        "Mobile: Social (9:16)",
+                        "Social (9:16)",
+                    ),
+                )
+                .clicked()
+            {
+                ui.close_menu();
+            }
+            app.view_mut().safe_zone = safe_zone;
+        });
 
         // ── Separator before inline controls ───────────────────────────────
         ui.separator();
@@ -579,9 +603,7 @@ pub fn show_menu_bar(ui: &mut Ui, app: &mut DiffPlayerApp) {
         let a_tooltip = app
             .decoder_a_path()
             .map(|p| p.to_owned())
-            .unwrap_or_else(|| {
-                tr(lang, "Abrir Vídeo A", "Open Video A", "Panya A").to_owned()
-            });
+            .unwrap_or_else(|| tr(lang, "Abrir Vídeo A", "Open Video A", "Panya A").to_owned());
         if ui
             .add(egui::Button::new(
                 RichText::new(format!("▶A {a_label}")).color(if has_a {
@@ -599,9 +621,7 @@ pub fn show_menu_bar(ui: &mut Ui, app: &mut DiffPlayerApp) {
         let b_tooltip = app
             .decoder_b_path()
             .map(|p| p.to_owned())
-            .unwrap_or_else(|| {
-                tr(lang, "Abrir Vídeo B", "Open Video B", "Panya B").to_owned()
-            });
+            .unwrap_or_else(|| tr(lang, "Abrir Vídeo B", "Open Video B", "Panya B").to_owned());
         if ui
             .add(egui::Button::new(
                 RichText::new(format!("▶B {b_label}")).color(if has_b {
@@ -619,6 +639,59 @@ pub fn show_menu_bar(ui: &mut Ui, app: &mut DiffPlayerApp) {
         ui.separator();
 
         // Playback controls
+        let mut loop_playback = app.view().loop_playback;
+        if ui
+            .checkbox(&mut loop_playback, tr(lang, "Bucle", "Loop", "Loop"))
+            .changed()
+        {
+            app.view_mut().loop_playback = loop_playback;
+            if loop_playback {
+                app.playback_mut().loop_range_active = false;
+            }
+        }
+
+        let mut loop_range = app.playback().loop_range_active;
+        if ui
+            .checkbox(
+                &mut loop_range,
+                tr(lang, "Bucle Rango", "Loop Range", "Loop Range"),
+            )
+            .changed()
+        {
+            if loop_range {
+                app.toggle_loop_range(); // This handles turning it on and disabling `loop_playback`
+            } else {
+                app.playback_mut().loop_range_active = false;
+            }
+        }
+
+        ui.add_space(4.0);
+        if ui
+            .button("[ I ]")
+            .on_hover_text(tr(
+                lang,
+                "Marcar inicio de bucle",
+                "Set Loop In",
+                "Set Loop In",
+            ))
+            .clicked()
+        {
+            app.set_loop_in();
+        }
+        if ui
+            .button("[ O ]")
+            .on_hover_text(tr(
+                lang,
+                "Marcar fin de bucle",
+                "Set Loop Out",
+                "Set Loop Out",
+            ))
+            .clicked()
+        {
+            app.set_loop_out();
+        }
+        ui.add_space(4.0);
+
         let is_playing = app.playback().is_playing;
         if ui
             .button(RichText::new("|<").size(16.0))
@@ -699,8 +772,11 @@ pub fn show_mode_toolbar(ui: &mut Ui, app: &mut DiffPlayerApp) {
         // Display mode buttons (stacked for narrow sidebar)
         if ui
             .add(
-                egui::Button::new(tr(lang, "Solo A", "A Only", "Erya A"))
-                .fill(if is_a { active } else { Color32::TRANSPARENT }),
+                egui::Button::new(tr(lang, "Solo A", "A Only", "Erya A")).fill(if is_a {
+                    active
+                } else {
+                    Color32::TRANSPARENT
+                }),
             )
             .clicked()
         {
@@ -709,8 +785,11 @@ pub fn show_mode_toolbar(ui: &mut Ui, app: &mut DiffPlayerApp) {
         }
         if ui
             .add(
-                egui::Button::new(tr(lang, "Solo B", "B Only", "Erya B"))
-                .fill(if is_b { active } else { Color32::TRANSPARENT }),
+                egui::Button::new(tr(lang, "Solo B", "B Only", "Erya B")).fill(if is_b {
+                    active
+                } else {
+                    Color32::TRANSPARENT
+                }),
             )
             .clicked()
         {
@@ -719,8 +798,7 @@ pub fn show_mode_toolbar(ui: &mut Ui, app: &mut DiffPlayerApp) {
         }
         if ui
             .add(
-                egui::Button::new(tr(lang, "Cortina", "Split", "Hyanda"))
-                .fill(if is_split {
+                egui::Button::new(tr(lang, "Cortina", "Split", "Hyanda")).fill(if is_split {
                     active
                 } else {
                     Color32::TRANSPARENT
@@ -735,12 +813,13 @@ pub fn show_mode_toolbar(ui: &mut Ui, app: &mut DiffPlayerApp) {
         }
         if ui
             .add(
-                egui::Button::new(tr(lang, "Diferencia", "Diff", "Winya"))
-                .fill(if c_mode == CompareMode::AbsDiff {
-                    active
-                } else {
-                    Color32::TRANSPARENT
-                }),
+                egui::Button::new(tr(lang, "Diferencia", "Diff", "Winya")).fill(
+                    if c_mode == CompareMode::AbsDiff {
+                        active
+                    } else {
+                        Color32::TRANSPARENT
+                    },
+                ),
             )
             .clicked()
         {
@@ -748,12 +827,13 @@ pub fn show_mode_toolbar(ui: &mut Ui, app: &mut DiffPlayerApp) {
         }
         if ui
             .add(
-                egui::Button::new(tr(lang, "Mapa Calor", "Heatmap", "Úrë"))
-                .fill(if c_mode == CompareMode::Heatmap {
-                    active
-                } else {
-                    Color32::TRANSPARENT
-                }),
+                egui::Button::new(tr(lang, "Mapa Calor", "Heatmap", "Úrë")).fill(
+                    if c_mode == CompareMode::Heatmap {
+                        active
+                    } else {
+                        Color32::TRANSPARENT
+                    },
+                ),
             )
             .clicked()
         {
@@ -761,12 +841,13 @@ pub fn show_mode_toolbar(ui: &mut Ui, app: &mut DiffPlayerApp) {
         }
         if ui
             .add(
-                egui::Button::new(tr(lang, "Lado a Lado", "Side×Side", "Ara"))
-                .fill(if c_mode == CompareMode::SideBySide {
-                    active
-                } else {
-                    Color32::TRANSPARENT
-                }),
+                egui::Button::new(tr(lang, "Lado a Lado", "Side×Side", "Ara")).fill(
+                    if c_mode == CompareMode::SideBySide {
+                        active
+                    } else {
+                        Color32::TRANSPARENT
+                    },
+                ),
             )
             .clicked()
         {
@@ -802,12 +883,7 @@ pub fn show_mode_toolbar(ui: &mut Ui, app: &mut DiffPlayerApp) {
                 }
             }
             CompareMode::Heatmap | CompareMode::AbsDiff => {
-                ui.label(tr(
-                    lang,
-                    "Amplificación:",
-                    "Amplification:",
-                    "Amp:",
-                ));
+                ui.label(tr(lang, "Amplificación:", "Amplification:", "Amp:"));
                 let mut amp = app.view().amplifier;
                 if ui
                     .add(
@@ -852,12 +928,7 @@ pub fn show_mode_toolbar(ui: &mut Ui, app: &mut DiffPlayerApp) {
                 }
             }
             CompareMode::SideBySide => {
-                ui.label(tr(
-                    lang,
-                    "Amplificación:",
-                    "Amplification:",
-                    "Amp:",
-                ));
+                ui.label(tr(lang, "Amplificación:", "Amplification:", "Amp:"));
                 let mut amp = app.view().amplifier;
                 if ui
                     .add(
@@ -972,19 +1043,6 @@ pub fn show_audio_panel(ui: &mut Ui, app: &mut DiffPlayerApp) {
                 "A lind (tamya)",
             )
         });
-        let level_a = (app.view().loudness_a.true_peak[0].max(app.view().loudness_a.true_peak[1]) as f32).clamp(0.0, 1.0);
-        let color_a = if level_a < 0.5 {
-            Color32::from_rgb(80, 200, 100)
-        } else if level_a < 0.85 {
-            Color32::from_rgb(220, 180, 0)
-        } else {
-            Color32::from_rgb(220, 60, 60)
-        };
-        ui.add(
-            egui::ProgressBar::new(level_a)
-                .fill(color_a)
-                .desired_width(40.0),
-        );
 
         ui.add_space(20.0);
         ui.separator();
@@ -1024,50 +1082,85 @@ pub fn show_audio_panel(ui: &mut Ui, app: &mut DiffPlayerApp) {
                 "B lind (tamya)",
             )
         });
-        let level_b = (app.view().loudness_b.true_peak[0].max(app.view().loudness_b.true_peak[1]) as f32).clamp(0.0, 1.0);
-        let color_b = if level_b < 0.5 {
-            Color32::from_rgb(80, 160, 220)
-        } else if level_b < 0.85 {
-            Color32::from_rgb(220, 180, 0)
-        } else {
-            Color32::from_rgb(220, 60, 60)
-        };
-        ui.add(
-            egui::ProgressBar::new(level_b)
-                .fill(color_b)
-                .desired_width(40.0),
-        );
 
         ui.add_space(20.0);
         ui.separator();
         ui.add_space(10.0);
 
-        if ui
-            .button(tr(
-                lang,
-                "Audiometer (Abrir/Cerrar)",
-                "Audiometer (Toggle)",
-                "Audiometer",
-            ))
+        #[cfg(target_os = "macos")]
+        {
+            if ui
+                .button(tr(
+                    lang,
+                    "Audiometer (Abrir/Cerrar)",
+                    "Audiometer (Toggle)",
+                    "Audiometer",
+                ))
+                .on_hover_text(tr(
+                    lang,
+                    "Abre o cierra el medidor Audiometer (Youlean)",
+                    "Opens or closes the Audiometer",
+                    "Audiometer",
+                ))
+                .clicked()
+            {
+                let is_running = std::process::Command::new("osascript")
+                    .arg("-e")
+                    .arg("application \"Youlean Loudness Meter 2\" is running")
+                    .output()
+                    .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "true")
+                    .unwrap_or(false);
+
+                if is_running {
+                    if let Err(e) = std::process::Command::new("osascript")
+                        .arg("-e")
+                        .arg("tell application \"Youlean Loudness Meter 2\" to quit")
+                        .spawn()
+                    {
+                        log::warn!("Failed to quit Youlean Loudness Meter 2: {}", e);
+                    }
+                    if let Some(saved) = app.view_mut().saved_loop_playback.take() {
+                        app.view_mut().loop_playback = saved;
+                    }
+                } else {
+                    if let Err(e) = std::process::Command::new("open")
+                        .arg("-a")
+                        .arg("Youlean Loudness Meter 2")
+                        .spawn()
+                    {
+                        log::warn!("Failed to open Youlean Loudness Meter 2: {}", e);
+                    }
+                    app.view_mut().saved_loop_playback = Some(app.view().loop_playback);
+                    app.view_mut().loop_playback = false;
+                    app.do_seek(0.0, ui.ctx());
+
+                    // Wait 2.5 seconds for Youlean GUI to open before playing
+                    if app.playback().is_playing {
+                        app.do_pause(ui.ctx());
+                    }
+                    app.view_mut().pending_play_after_delay =
+                        Some(std::time::Instant::now() + std::time::Duration::from_millis(2500));
+                }
+            }
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            ui.add_enabled(
+                false,
+                egui::Button::new(tr(
+                    lang,
+                    "Audiometer (No soportado)",
+                    "Audiometer (Unsupported)",
+                    "Audiometer",
+                )),
+            )
             .on_hover_text(tr(
                 lang,
-                "Abre o cierra el medidor Audiometer (Youlean)",
-                "Opens or closes the Audiometer",
-                "Audiometer",
-            ))
-            .clicked()
-        {
-            std::process::Command::new("sh")
-                .arg("-c")
-                .arg(
-                    "if osascript -e 'application \"Youlean Loudness Meter 2\" is running' | grep -q 'true'; then \
-                         osascript -e 'tell application \"Youlean Loudness Meter 2\" to quit'; \
-                     else \
-                         open -a \"Youlean Loudness Meter 2\"; \
-                     fi",
-                )
-                .spawn()
-                .ok();
+                "Integración Youlean no soportada en esta plataforma.",
+                "Youlean integration not supported on this platform.",
+                "Youlean integration not supported on this platform.",
+            ));
         }
 
         ui.add_space(10.0);

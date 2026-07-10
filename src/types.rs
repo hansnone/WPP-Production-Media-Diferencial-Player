@@ -8,7 +8,7 @@ pub struct VideoFrame {
     /// Presentation timestamp in seconds.
     pub pts: f64,
     /// Raw RGBA bytes, row-major, no padding.
-    pub rgba_data: Vec<u8>,
+    pub rgba_data: std::sync::Arc<[u8]>,
     pub width: u32,
     pub height: u32,
 }
@@ -36,9 +36,6 @@ pub enum DecoderCommand {
     Seek(f64),
     /// Decode exactly one frame forward from the current position.
     StepForward,
-    /// Retroceso vía decoder (seek interno); la UI usa seek por FPS (`do_step_bck_inner`).
-    #[allow(dead_code)]
-    StepBack,
     /// Terminate the decoder thread.
     Stop,
     /// Reservado: el volumen se aplica en `rodio` desde la UI, no en el hilo decoder.
@@ -61,6 +58,7 @@ pub struct ColorMetadata {
     pub video_codec: String,
     pub audio_codec: String,
     pub major_brand: String,
+    pub start_timecode: Option<String>,
     pub video_stream_metadata: String,
     pub audio_stream_metadata: String,
 }
@@ -160,23 +158,63 @@ impl Default for Theme {
 /// Estado de reproducción compartido entre la UI y la coordinación con los decoders.
 ///
 /// Reloj maestro: al reproducir, `current_pts = playback_start_pts + elapsed` desde `playback_start_instant`.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct PlaybackState {
     pub is_playing: bool,
     pub current_pts: f64,
     pub duration_a: f64,
     pub duration_b: f64,
+    pub loop_in: Option<f64>,
+    pub loop_out: Option<f64>,
+    pub loop_range_active: bool,
     /// When set, current_pts is derived from this instant + playback_start_pts (system-time master clock).
     pub playback_start_instant: Option<std::time::Instant>,
     /// PTS at the moment we started (or seeked during) playback.
     pub playback_start_pts: f64,
+    /// Audio sample rate preferred by the host output device.
+    pub target_sample_rate: u32,
+    /// Audio channel count preferred by the host output device.
+    pub target_channels: u16,
+}
+
+impl Default for PlaybackState {
+    fn default() -> Self {
+        Self {
+            is_playing: false,
+            current_pts: 0.0,
+            duration_a: 0.0,
+            duration_b: 0.0,
+            loop_in: None,
+            loop_out: None,
+            loop_range_active: false,
+            playback_start_instant: None,
+            playback_start_pts: 0.0,
+            target_sample_rate: 44100,
+            target_channels: 2,
+        }
+    }
 }
 
 /// Which video channel (A or B).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Channel {
     A,
     B,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Marker {
+    pub pts: f64,
+    pub note: String,
+    pub color: [f32; 3],
+    pub channel_hint: Option<Channel>,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct SessionState {
+    pub markers: Vec<Marker>,
+    pub video_a_path: Option<String>,
+    pub video_b_path: Option<String>,
 }
 
 #[cfg(test)]

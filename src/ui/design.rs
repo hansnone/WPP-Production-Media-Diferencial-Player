@@ -5,7 +5,12 @@ use egui::Color32;
 use crate::types::Language;
 
 /// Short ES / EN / Quenya lookup for menu copy (extend as i18n grows).
-pub fn tr(lang: Language, es: &'static str, en: &'static str, quenya: &'static str) -> &'static str {
+pub fn tr(
+    lang: Language,
+    es: &'static str,
+    en: &'static str,
+    quenya: &'static str,
+) -> &'static str {
     match lang {
         Language::Es => es,
         Language::En => en,

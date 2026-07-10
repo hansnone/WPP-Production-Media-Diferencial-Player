@@ -37,6 +37,27 @@ pub fn show(ui: &mut Ui, app: &mut DiffPlayerApp) {
             .size(FONT_SUBTITLE)
             .weak(),
         );
+
+        if let (Some(a), Some(b)) = (&meta_a, &meta_b) {
+            let fps_diff = (a.fps - b.fps).abs();
+            if fps_diff > 0.001 {
+                ui.add_space(8.0);
+                ui.group(|ui| {
+                    ui.label(
+                        RichText::new("⚠️ AVISO: Discrepancia de Framerate")
+                            .color(Color32::from_rgb(255, 100, 100))
+                            .strong()
+                    );
+                    ui.label(format!("Canal A: {:.3} fps\nCanal B: {:.3} fps", a.fps, b.fps));
+                    ui.label(
+                        RichText::new("La sincronización de frames fallará o presentará tirones a lo largo de la reproducción.")
+                            .size(11.0)
+                            .weak()
+                    );
+                });
+            }
+        }
+
         ui.separator();
 
         // ── Current playback info ─────────────────────────────────────────
@@ -61,12 +82,24 @@ pub fn show(ui: &mut Ui, app: &mut DiffPlayerApp) {
                 );
                 kv(
                     ui,
-                    tr(lang, "Paneo", "Pan UV", "Pan"),
-                    &format!("({pan_u:.3}, {pan_v:.3})"),
+                    tr(lang, "Panorámica", "Pan", "Pano"),
+                    &format!("{pan_u:.2}, {pan_v:.2}"),
                 );
             });
 
         ui.add_space(8.0);
+        ui.group(|ui| {
+            if ui.button(tr(lang, "Calcular PSNR (Frame actual)", "Calculate PSNR (Current Frame)", "PSNR")).clicked() {
+                app.calculate_psnr();
+            }
+            if let Some(psnr) = app.view().last_psnr {
+                ui.label(RichText::new(format!("PSNR: {:.2} dB", psnr)).strong().color(Color32::from_rgb(100, 255, 100)));
+            } else {
+                ui.label(RichText::new("PSNR: --").weak());
+            }
+        });
+
+        ui.add_space(6.0);
         ui.separator();
 
         let dark_mode = ui.visuals().dark_mode;
@@ -297,11 +330,7 @@ fn channel_section(
                     tr(lang, "Fmt Píxel", "Pixel Fmt", "Píxel"),
                     &m.pixel_format,
                 );
-                kv(
-                    ui,
-                    tr(lang, "Espacio", "Colorspace", "Cala"),
-                    &m.colorspace,
-                );
+                kv(ui, tr(lang, "Espacio", "Colorspace", "Cala"), &m.colorspace);
                 kv(
                     ui,
                     tr(lang, "Transfer", "Transfer", "Tíra"),
@@ -332,12 +361,7 @@ fn channel_section(
                 );
                 kv(
                     ui,
-                    tr(
-                        lang,
-                        "Marca contenedor",
-                        "Major brand",
-                        "Marca",
-                    ),
+                    tr(lang, "Marca contenedor", "Major brand", "Marca"),
                     if m.major_brand.is_empty() || m.major_brand == "—" {
                         "—"
                     } else {
@@ -399,9 +423,10 @@ fn kv(ui: &mut Ui, key: &str, value: &str) {
 }
 
 fn format_dur(secs: f64) -> String {
-    let total = secs as u64;
+    let total = secs.trunc() as u64;
     let h = total / 3600;
     let m = (total % 3600) / 60;
     let s = total % 60;
-    format!("{h:02}:{m:02}:{s:02}")
+    let ms = (secs.fract() * 1000.0).trunc() as u64;
+    format!("{h:02}:{m:02}:{s:02}.{ms:03}")
 }

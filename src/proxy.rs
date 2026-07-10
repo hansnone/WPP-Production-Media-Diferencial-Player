@@ -16,6 +16,31 @@ use parking_lot::Mutex;
 pub const PROXY_VIDEO_FILENAME: &str = "proxy.mkv";
 const EXR_LIST_FILENAME: &str = "exr_list.txt";
 
+use crate::error::AppError;
+
+pub fn validate_ffmpeg_binary() -> Result<PathBuf, AppError> {
+    let output = Command::new("ffmpeg")
+        .arg("-version")
+        .output()
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                AppError::FfmpegNotFound
+            } else {
+                AppError::Io(e)
+            }
+        })?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        return Err(AppError::FfmpegCommandFailed {
+            status: output.status.code(),
+            stderr,
+        });
+    }
+
+    Ok(PathBuf::from("ffmpeg"))
+}
+
 /// Ordena rutas EXR por nombre de fichero (mismo criterio que `ls` lexicográfico en el nombre).
 fn sort_exr_paths_by_file_name(paths: &mut [PathBuf]) {
     paths.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
@@ -106,12 +131,15 @@ fn run_exr_to_video_proxy_in_background(
     dst_dir: PathBuf,
     progress: Arc<Mutex<f32>>,
     running: Arc<AtomicBool>,
+    error: Arc<Mutex<Option<String>>>,
 ) {
     if running.load(Ordering::Relaxed) {
         return;
     }
 
-    let _ = std::fs::create_dir_all(&dst_dir);
+    if let Err(e) = std::fs::create_dir_all(&dst_dir) {
+        log::warn!("Failed to create proxy dir {:?}: {}", dst_dir, e);
+    }
 
     let exr_paths = collect_exr_paths(source.clone());
     let total = exr_paths.len();
@@ -123,7 +151,9 @@ fn run_exr_to_video_proxy_in_background(
     let list_path = match write_exr_concat_list(&dst_dir, &exr_paths) {
         Ok(p) => p,
         Err(e) => {
-            log::error!("Failed to write EXR list: {}", e);
+            let msg = format!("Failed to write EXR list: {}", e);
+            log::error!("{}", msg);
+            *error.lock() = Some(msg);
             running.store(false, Ordering::Relaxed);
             return;
         }
@@ -134,6 +164,11 @@ fn run_exr_to_video_proxy_in_background(
     running.store(true, Ordering::Relaxed);
     *progress.lock() = 0.0;
 
+    const FFMPEG_SCALE: &str = "scale=-1:1080";
+    const FFMPEG_GOP: &str = "1";
+    const FFMPEG_LEVEL: &str = "3";
+    const FFMPEG_PIX_FMT: &str = "yuv420p";
+
     thread::spawn(move || {
         // FFV1: lossless. -g 1: keyframe every frame. scale=-1:1080: 1080p height. -an: no audio.
         let mut child = match Command::new("ffmpeg")
@@ -141,11 +176,11 @@ fn run_exr_to_video_proxy_in_background(
             .args(["-f", "concat"])
             .args(["-safe", "0"])
             .args(["-i", list_path.to_string_lossy().as_ref()])
-            .args(["-vf", "scale=-1:1080"])
+            .args(["-vf", FFMPEG_SCALE])
             .args(["-c:v", "ffv1"])
-            .args(["-g", "1"])
-            .args(["-level", "3"])
-            .args(["-pix_fmt", "yuv420p"])
+            .args(["-g", FFMPEG_GOP])
+            .args(["-level", FFMPEG_LEVEL])
+            .args(["-pix_fmt", FFMPEG_PIX_FMT])
             .arg("-an")
             .arg(output_path.as_os_str())
             .stderr(Stdio::piped())
@@ -154,14 +189,18 @@ fn run_exr_to_video_proxy_in_background(
         {
             Ok(c) => c,
             Err(e) => {
-                log::error!("Failed to spawn ffmpeg: {}", e);
+                let msg = format!("Failed to spawn ffmpeg: {}", e);
+                log::error!("{}", msg);
+                *error.lock() = Some(msg);
                 running.store(false, Ordering::Relaxed);
                 return;
             }
         };
 
         let Some(stderr) = child.stderr.take() else {
-            log::error!("ffmpeg stderr was not piped as expected");
+            let msg = "ffmpeg stderr was not piped as expected".to_string();
+            log::error!("{}", msg);
+            *error.lock() = Some(msg);
             running.store(false, Ordering::Relaxed);
             return;
         };
@@ -179,7 +218,19 @@ fn run_exr_to_video_proxy_in_background(
             }
         }
 
-        let _ = child.wait();
+        match child.wait() {
+            Ok(status) if !status.success() => {
+                let msg = format!("FFmpeg failed with status: {}", status);
+                log::warn!("{}", msg);
+                *error.lock() = Some(msg);
+            }
+            Err(e) => {
+                let msg = format!("Failed to wait on ffmpeg child process: {}", e);
+                log::warn!("{}", msg);
+                *error.lock() = Some(msg);
+            }
+            _ => {}
+        }
         *progress.lock() = 1.0;
         running.store(false, Ordering::Relaxed);
     });
@@ -191,23 +242,32 @@ pub fn run_from_directory_in_background(
     dst_dir: PathBuf,
     progress: Arc<Mutex<f32>>,
     running: Arc<AtomicBool>,
+    error: Arc<Mutex<Option<String>>>,
 ) {
     run_exr_to_video_proxy_in_background(
         ProxySource::Directory(src_dir),
         dst_dir,
         progress,
         running,
+        error,
     );
 }
 
-/// Start proxy generation from a list of EXR file paths. Output: dst_dir/proxy.mkv.
+/// Start proxy generation from an explicit list of files. Output: dst_dir/proxy.mkv.
 pub fn run_from_files_in_background(
     exr_paths: Vec<PathBuf>,
     dst_dir: PathBuf,
     progress: Arc<Mutex<f32>>,
     running: Arc<AtomicBool>,
+    error: Arc<Mutex<Option<String>>>,
 ) {
-    run_exr_to_video_proxy_in_background(ProxySource::Files(exr_paths), dst_dir, progress, running);
+    run_exr_to_video_proxy_in_background(
+        ProxySource::Files(exr_paths),
+        dst_dir,
+        progress,
+        running,
+        error,
+    );
 }
 
 #[cfg(test)]
