@@ -3,23 +3,29 @@
 //! Submódulos: [`playback`] (temporización de repintado), [`proxy_bridge`] (ruta al proxy.mkv).
 //! Ver `docs/ARQUITECTURA.md` en el repositorio para el flujo completo.
 
-mod playback;
+mod audio;
+mod canvas;
+mod drag_drop;
+mod keyboard;
+mod layout;
+pub mod playback;
+mod proxy;
 mod proxy_bridge;
 
 use crossbeam_channel::{Receiver, Sender};
 use parking_lot::Mutex;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use crate::decoder;
 use crate::renderer::{RenderCallback, ShaderUniforms, VideoRenderer};
 use crate::types::{
     AudioFrame, Channel, ColorMetadata, CompareMode, DecoderCommand, DiffMode, Language,
-    PlaybackState, SafeZoneMode, VideoFrame,
+    PlaybackState, VideoFrame,
 };
 use rodio::{OutputStream, Sink};
 use std::path::PathBuf;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
@@ -32,7 +38,6 @@ pub struct ViewState {
     pub mode: CompareMode,
     pub diff_mode: DiffMode,
     pub lang: Language,
-    pub theme: crate::types::Theme,
     pub show_hud: bool,
     /// Show left sidebar (video metadata / info).
     pub show_left_panel: bool,
@@ -54,6 +59,7 @@ pub struct ViewState {
     pub mute_b: bool,
     pub vol_a: f32,
     pub vol_b: f32,
+    pub timeline_thumbs_channel: crate::types::Channel,
     /// Split curtain orientation: false = vertical (X), true = horizontal (Y).
     pub split_horizontal: bool,
     /// Safe zone overlay: None, TV (EBU R95), or Social (9:16).
@@ -74,24 +80,7 @@ pub struct ViewState {
     pub last_psnr: Option<f64>,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct LoudnessResult {
-    pub momentary: f64,
-    pub short_term: f64,
-    pub integrated: f64,
-    pub true_peak: [f64; 2],
-}
-
-impl Default for LoudnessResult {
-    fn default() -> Self {
-        Self {
-            momentary: -120.0,
-            short_term: -120.0,
-            integrated: -120.0,
-            true_peak: [0.0; 2],
-        }
-    }
-}
+use crate::types::LoudnessResult;
 
 impl ViewState {
     pub fn config_path() -> Option<PathBuf> {
@@ -158,7 +147,6 @@ impl Default for ViewState {
             mode: CompareMode::SplitScreen,
             diff_mode: DiffMode::AbsLinear,
             lang: Language::Es,
-            theme: crate::types::Theme::Dark,
             show_hud: true,
             show_left_panel: true,
             show_right_panel: true,
@@ -174,12 +162,23 @@ impl Default for ViewState {
             canvas_rect: egui::Rect::NOTHING,
             mute_a: false,
             mute_b: false,
+            timeline_thumbs_channel: crate::types::Channel::A,
             vol_a: 1.0,
             vol_b: 1.0,
             split_horizontal: false,
             safe_zone: crate::types::SafeZoneMode::None,
-            loudness_a: LoudnessResult { momentary: 0.0, short_term: 0.0, integrated: 0.0, true_peak: [0.0, 0.0] },
-            loudness_b: LoudnessResult { momentary: 0.0, short_term: 0.0, integrated: 0.0, true_peak: [0.0, 0.0] },
+            loudness_a: LoudnessResult {
+                momentary: 0.0,
+                short_term: 0.0,
+                integrated: 0.0,
+                true_peak: [0.0, 0.0],
+            },
+            loudness_b: LoudnessResult {
+                momentary: 0.0,
+                short_term: 0.0,
+                integrated: 0.0,
+                true_peak: [0.0, 0.0],
+            },
             loop_playback: true,
             saved_loop_playback: None,
             pending_play_after_delay: None,
@@ -200,6 +199,7 @@ struct DecoderHandle {
     next_frame: Option<VideoFrame>,
     meta: ColorMetadata,
     path: String,
+    loudness_arc: Arc<Mutex<crate::types::LoudnessResult>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -225,11 +225,6 @@ pub struct DiffPlayerApp {
     sink_a: Option<Sink>,
     sink_b: Option<Sink>,
 
-    // EBU R128 analyzers: Option<(analyzer, channels, sample_rate)>
-    pub ebu_a: Option<(ebur128::EbuR128, u32, u32)>,
-    pub ebu_b: Option<(ebur128::EbuR128, u32, u32)>,
-
-
     error_title: Option<String>,
     error_message: Option<String>,
     last_step_time: f64,
@@ -240,8 +235,8 @@ pub struct DiffPlayerApp {
     /// Incremented each frame. Frame 0 skips all Wgpu work so the window can appear on macOS.
     frame_count: u64,
 
-    /// Deferred play/pause toggle (Space): process at start of next update to avoid re-entrancy deadlock.
-    pending_play_pause_toggle: bool,
+    /// Deferred play/pause action: process at start of next update to avoid re-entrancy deadlock.
+    pending_transport_action: PendingTransportAction,
 
     /// Deferred key action: process at start of next update to avoid re-entrancy/deadlock when called from ctx.input().
     pending_key_action: PendingKeyAction,
@@ -268,8 +263,9 @@ pub struct DiffPlayerApp {
 }
 
 /// Key actions deferred from ctx.input() to start of update() to avoid re-entrancy on macOS.
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum PendingKeyAction {
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub(super) enum PendingKeyAction {
+    #[default]
     None,
     StepFwd,
     StepBck,
@@ -282,17 +278,15 @@ enum PendingKeyAction {
     Zoom(f32),
     ResetZoomPan,
     SwapVideos,
-    SetLoopIn,
-    SetLoopOut,
-    ToggleLoopRange,
-    ClearLoopRange,
-    AddMarker,
 }
 
-impl Default for PendingKeyAction {
-    fn default() -> Self {
-        PendingKeyAction::None
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PendingTransportAction {
+    #[default]
+    None,
+    Play,
+    Pause,
+    Toggle,
 }
 
 impl DiffPlayerApp {
@@ -301,7 +295,10 @@ impl DiffPlayerApp {
 
         let render_state = match cc.wgpu_render_state.as_ref() {
             Some(rs) => rs,
-            None => panic!("Wgpu render state missing"),
+            None => {
+                log::error!("CRITICAL: Wgpu render state is missing from CreationContext! Make sure eframe is configured with eframe::Renderer::Wgpu.");
+                panic!("Wgpu render state missing");
+            }
         };
 
         let target_format = render_state.target_format;
@@ -311,7 +308,7 @@ impl DiffPlayerApp {
         )));
 
         let view = ViewState::load();
-        crate::ui::theme::apply_theme(&cc.egui_ctx, view.theme);
+        crate::ui::theme::apply_professional_dark_theme(&cc.egui_ctx);
 
         // INICIALIZACIÓN DIRECTA (¡Ya no hay dark_light que moleste!)
 
@@ -353,16 +350,12 @@ impl DiffPlayerApp {
             sink_a,
             sink_b,
 
-            ebu_a: None,
-            ebu_b: None,
-
-
             error_title: None,
             error_message: None,
             last_step_time: 0.0,
             focus_visible_frames_left: 15,
             frame_count: 0,
-            pending_play_pause_toggle: false,
+            pending_transport_action: PendingTransportAction::None,
             pending_key_action: PendingKeyAction::None,
 
             proxy_progress: Arc::new(Mutex::new(0.0)),
@@ -378,78 +371,6 @@ impl DiffPlayerApp {
             thumbs_a: Vec::new(),
             thumbs_b: Vec::new(),
         }
-    }
-
-    /// Start EXR→PNG proxy generation from a directory (lists .exr inside). When done, loads sequence into `channel`.
-    pub fn start_proxy_from_exr_input_dir(
-        &mut self,
-        src_dir: PathBuf,
-        channel: Channel,
-        _ctx: &egui::Context,
-    ) {
-        if self.proxy_running() {
-            return;
-        }
-        let name = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_millis().to_string())
-            .unwrap_or_else(|_| "proxy".to_string());
-        let temp_dir = std::env::temp_dir().join("diffplayerqc_proxies").join(name);
-        if let Err(e) = std::fs::create_dir_all(&temp_dir) {
-            log::error!("Failed to create proxy temp dir: {e}");
-            return;
-        }
-        self.proxy_temp_dir = Some(temp_dir.clone());
-        self.proxy_target_channel = Some(channel);
-        *self.proxy_progress.lock() = 0.0;
-        crate::proxy::run_from_directory_in_background(
-            src_dir,
-            temp_dir,
-            Arc::clone(&self.proxy_progress),
-            Arc::clone(&self.proxy_running),
-            Arc::clone(&self.proxy_error),
-        );
-    }
-
-    /// Start EXR→PNG proxy generation from a list of EXR file paths. When done, loads sequence into `channel`.
-    pub fn start_proxy_from_exr_input_files(
-        &mut self,
-        exr_paths: Vec<PathBuf>,
-        channel: Channel,
-        _ctx: &egui::Context,
-    ) {
-        if self.proxy_running() || exr_paths.is_empty() {
-            return;
-        }
-        let name = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_millis().to_string())
-            .unwrap_or_else(|_| "proxy".to_string());
-        let temp_dir = std::env::temp_dir().join("diffplayerqc_proxies").join(name);
-        if let Err(e) = std::fs::create_dir_all(&temp_dir) {
-            log::error!("Failed to create proxy temp dir: {e}");
-            return;
-        }
-        self.proxy_temp_dir = Some(temp_dir.clone());
-        self.proxy_target_channel = Some(channel);
-        *self.proxy_progress.lock() = 0.0;
-        crate::proxy::run_from_files_in_background(
-            exr_paths,
-            temp_dir,
-            Arc::clone(&self.proxy_progress),
-            Arc::clone(&self.proxy_running),
-            Arc::clone(&self.proxy_error),
-        );
-    }
-
-    /// True if proxy generation is currently running.
-    pub fn proxy_running(&self) -> bool {
-        self.proxy_running.load(Ordering::Relaxed)
-    }
-
-    /// Current proxy progress 0.0..=1.0.
-    pub fn proxy_progress(&self) -> f32 {
-        *self.proxy_progress.lock()
     }
 
     // -----------------------------------------------------------------------
@@ -476,7 +397,7 @@ impl DiffPlayerApp {
     /// Load a video from a filesystem path into the given channel, replacing any existing video.
     pub fn open_video_from_path(&mut self, path_str: String, chan: Channel, ctx: &egui::Context) {
         match decoder::spawn_decoder(&path_str, 48000, 2) {
-            Ok((cmd_tx, frame_rx, audio_rx, meta)) => {
+            Ok((cmd_tx, frame_rx, audio_rx, meta, loudness_arc)) => {
                 let handle = DecoderHandle {
                     cmd_tx,
                     frame_rx,
@@ -485,10 +406,12 @@ impl DiffPlayerApp {
                     next_frame: None,
                     meta,
                     path: path_str,
+                    loudness_arc,
                 };
 
                 match chan {
                     Channel::A => {
+                        self.session.video_a_path = Some(handle.path.clone());
                         // Stop old decoder if any
                         if let Some(old) = self.decoder_a.take() {
                             let _ = old.cmd_tx.send(DecoderCommand::Stop);
@@ -510,6 +433,7 @@ impl DiffPlayerApp {
                         // No need for repaint here as do_seek handles it
                     }
                     Channel::B => {
+                        self.session.video_b_path = Some(handle.path.clone());
                         if let Some(old) = self.decoder_b.take() {
                             let _ = old.cmd_tx.send(DecoderCommand::Stop);
                         }
@@ -543,22 +467,24 @@ impl DiffPlayerApp {
     /// Drain at most one frame per decoder that is at or before current_pts (master clock).
     /// Future frames stay in next_frame or channel; no blind turbo-drain, no clock resync.
     fn drain_thumbnails(&mut self, ctx: &egui::Context) {
-        let mut process_thumbs = |rx: &crossbeam_channel::Receiver<crate::thumbnail::ThumbnailFrame>, thumbs: &mut Vec<Option<egui::TextureHandle>>| {
-            while let Ok(frame) = rx.try_recv() {
-                let img = egui::ColorImage::from_rgba_unmultiplied(
-                    [frame.width as usize, frame.height as usize],
-                    &frame.rgba_data,
-                );
-                let handle = ctx.load_texture(
-                    format!("thumb_{}", frame.index),
-                    img,
-                    egui::TextureOptions::LINEAR,
-                );
-                if frame.index < thumbs.len() {
-                    thumbs[frame.index] = Some(handle);
+        let process_thumbs =
+            |rx: &crossbeam_channel::Receiver<crate::thumbnail::ThumbnailFrame>,
+             thumbs: &mut Vec<Option<egui::TextureHandle>>| {
+                while let Ok(frame) = rx.try_recv() {
+                    let img = egui::ColorImage::from_rgba_unmultiplied(
+                        [frame.width as usize, frame.height as usize],
+                        &frame.rgba_data,
+                    );
+                    let handle = ctx.load_texture(
+                        format!("thumb_{}", frame.index),
+                        img,
+                        egui::TextureOptions::LINEAR,
+                    );
+                    if frame.index < thumbs.len() {
+                        thumbs[frame.index] = Some(handle);
+                    }
                 }
-            }
-        };
+            };
 
         if let Some(rx) = &self.thumb_rx_a {
             process_thumbs(rx, &mut self.thumbs_a);
@@ -574,46 +500,32 @@ impl DiffPlayerApp {
         let current_pts = self.playback.current_pts;
         let is_playing = self.playback.is_playing;
         let mut repainted = false;
-        const PTS_TOLERANCE: f64 = 0.005;
 
         let mut process_dec = |dec: &mut DecoderHandle, is_a: bool| {
-            let mut best_frame = dec.next_frame.take();
-
-            if is_playing {
-                loop {
-                    match dec.frame_rx.try_recv() {
-                        Ok(frame) if frame.pts <= current_pts + PTS_TOLERANCE => best_frame = Some(frame),
-                        Ok(frame) => { dec.next_frame = Some(frame); break; }
-                        Err(_) => break,
-                    }
-                }
-            } else {
-                while let Ok(frame) = dec.frame_rx.try_recv() {
-                    best_frame = Some(frame);
-                }
-            }
+            let fps = dec.meta.fps.max(1.0);
+            let tolerance = 0.5 / fps;
+            let incoming = std::iter::from_fn(|| dec.frame_rx.try_recv().ok());
+            let (best_frame, next) = playback::select_best_frame(
+                dec.next_frame.take(),
+                incoming,
+                current_pts,
+                tolerance,
+            );
+            dec.next_frame = next;
 
             if let Some(frame) = best_frame {
-                let show = true;
-
-                if show {
-                    let (w, h) = (frame.width, frame.height);
-                    let data = frame.rgba_data.clone();
-                    {
-                        let mut rend = self.renderer.lock();
-                        if is_a {
-                            rend.update_texture_a(device, queue, &data, w, h);
-                        } else {
-                            rend.update_texture_b(device, queue, &data, w, h);
-                        }
+                let (w, h) = (frame.width, frame.height);
+                let data = frame.rgba_data.clone();
+                {
+                    let mut rend = self.renderer.lock();
+                    if is_a {
+                        rend.update_texture_a(device, queue, &data, w, h);
+                    } else {
+                        rend.update_texture_b(device, queue, &data, w, h);
                     }
-                    dec.last_frame = Some(frame.clone());
-                    dec.next_frame = dec.frame_rx.try_recv().ok();
-                    repainted = true;
-                } else {
-                    // Future frame: keep for next cycle
-                    dec.next_frame = Some(frame);
                 }
+                dec.last_frame = Some(frame);
+                repainted = true;
             }
         };
 
@@ -784,6 +696,13 @@ impl DiffPlayerApp {
         std::mem::swap(&mut self.view.mute_a, &mut self.view.mute_b);
         std::mem::swap(&mut self.view.vol_a, &mut self.view.vol_b);
         std::mem::swap(&mut self.sink_a, &mut self.sink_b);
+        std::mem::swap(
+            &mut self.session.video_a_path,
+            &mut self.session.video_b_path,
+        );
+        std::mem::swap(&mut self.thumb_rx_a, &mut self.thumb_rx_b);
+        std::mem::swap(&mut self.thumb_running_a, &mut self.thumb_running_b);
+        std::mem::swap(&mut self.thumbs_a, &mut self.thumbs_b);
         // Force rendering buffers to swap next frame
         if let Some(dec) = &mut self.decoder_a {
             dec.next_frame = dec.frame_rx.try_recv().ok();
@@ -792,20 +711,6 @@ impl DiffPlayerApp {
             dec.next_frame = dec.frame_rx.try_recv().ok();
         }
         ctx.request_repaint();
-    }
-
-    fn complete_proxy_if_ready(&mut self, ctx: &egui::Context) {
-        if self.proxy_running() || self.proxy_target_channel.is_none() || self.proxy_temp_dir.is_none() {
-            return;
-        }
-        let dir = self.proxy_temp_dir.take().unwrap();
-        let channel = self.proxy_target_channel.take().unwrap();
-        let proxy_video = proxy_bridge::proxy_video_path(&dir);
-        if proxy_video.exists() {
-            self.proxy_temp_dirs.push(dir);
-            let path_str = proxy_video.to_string_lossy().to_string();
-            self.open_video_from_path(path_str, channel, ctx);
-        }
     }
 
     fn update_master_clock_and_repaint(&mut self, ctx: &egui::Context, is_first_frame: bool) {
@@ -818,7 +723,9 @@ impl DiffPlayerApp {
             let max_duration = self.playback.duration_a.max(self.playback.duration_b);
 
             if self.playback.loop_range_active {
-                if let (Some(in_pts), Some(out_pts)) = (self.playback.loop_in, self.playback.loop_out) {
+                if let (Some(in_pts), Some(out_pts)) =
+                    (self.playback.loop_in, self.playback.loop_out)
+                {
                     if self.playback.current_pts >= out_pts {
                         self.do_seek(in_pts, ctx);
                     }
@@ -839,330 +746,12 @@ impl DiffPlayerApp {
                 .or_else(|| self.decoder_b_meta())
                 .map(|m| m.fps)
                 .unwrap_or(25.0);
-            let max_delay_ms = if self.sink_a.is_some() || self.sink_b.is_some() {
-                playback::REPINT_AUDIO_MAX_MS
-            } else {
-                playback::REPINT_IDLE_MAX_MS
-            };
             if fps > 0.0 {
-                let delay =
-                    playback::next_frame_repaint_delay(fps, self.playback.current_pts, max_delay_ms);
-                ctx.request_repaint_after(delay);
+                ctx.request_repaint();
             } else {
                 ctx.request_repaint();
             }
         }
-    }
-
-    fn drain_audio_and_update_levels(&mut self) {
-        use ebur128::{EbuR128, Mode};
-
-        // If playback is paused, let the levels slowly decay in the UI if needed,
-        if !self.playback.is_playing {
-            self.view.loudness_a.true_peak = [0.0, 0.0];
-            self.view.loudness_b.true_peak = [0.0, 0.0];
-            return;
-        }
-
-        // ── Channel A ────────────────────────────────────────────────────────
-        let mut processed_a = false;
-        let mut tp_a = [0.0f64, 0.0f64];
-        if let Some(dec) = &mut self.decoder_a {
-            if let Some(sink) = &self.sink_a {
-                while let Ok(audio) = dec.audio_rx.try_recv() {
-                    processed_a = true;
-                    let channels = audio.channels as u32;
-                    let sample_rate = audio.sample_rate as u32;
-
-                    // Initialize or reset analyzer if format changes
-                    if self.ebu_a.is_none() || self.ebu_a.as_ref().unwrap().1 != channels || self.ebu_a.as_ref().unwrap().2 != sample_rate {
-                        if let Ok(ebu) = EbuR128::new(channels, sample_rate, Mode::I | Mode::M | Mode::S | Mode::TRUE_PEAK) {
-                            self.ebu_a = Some((ebu, channels, sample_rate));
-                        }
-                    }
-
-                    if let Some((ebu, stored_ch, stored_rate)) = &mut self.ebu_a {
-                        // For mono, we might need to duplicate to stereo for proper loudness calculation
-                        // but ebur128 handles channel mapping if initialized correctly.
-                        if channels == 1 {
-                            // Interleave mono into stereo
-                            let mut stereo = Vec::with_capacity(audio.samples.len() * 2);
-                            for &s in &audio.samples {
-                                stereo.push(s);
-                                stereo.push(s);
-                            }
-                            // If we duplicated to stereo, ensure ebu analyzer is 2 channels
-                            if *stored_ch != 2 {
-                                if let Ok(new_ebu) = EbuR128::new(2, sample_rate, Mode::I | Mode::M | Mode::S | Mode::TRUE_PEAK) {
-                                    *ebu = new_ebu;
-                                    *stored_ch = 2;
-                                    *stored_rate = sample_rate;
-                                }
-                            }
-                            let _ = ebu.add_frames_f32(&stereo);
-                        } else {
-                            let _ = ebu.add_frames_f32(&audio.samples);
-                        }
-
-                        let chs = *stored_ch;
-                        tp_a[0] = tp_a[0].max(ebu.prev_true_peak(0).unwrap_or(0.0));
-                        tp_a[1] = tp_a[1].max(if chs > 1 { ebu.prev_true_peak(1).unwrap_or(0.0) } else { ebu.prev_true_peak(0).unwrap_or(0.0) });
-
-                        self.view.loudness_a = LoudnessResult {
-                            momentary: ebu.loudness_momentary().unwrap_or(-120.0),
-                            short_term: ebu.loudness_shortterm().unwrap_or(-120.0),
-                            integrated: ebu.loudness_global().unwrap_or(-120.0),
-                            true_peak: tp_a,
-                        };
-                    }
-
-                    sink.append(rodio::buffer::SamplesBuffer::new(
-                        audio.channels,
-                        audio.sample_rate,
-                        audio.samples,
-                    ));
-                }
-            }
-        }
-        if !processed_a {
-            self.view.loudness_a.true_peak = [0.0, 0.0];
-        }
-
-        // ── Channel B ────────────────────────────────────────────────────────
-        let mut processed_b = false;
-        let mut tp_b = [0.0f64, 0.0f64];
-        if let Some(dec) = &mut self.decoder_b {
-            if let Some(sink) = &self.sink_b {
-                while let Ok(audio) = dec.audio_rx.try_recv() {
-                    processed_b = true;
-                    let channels = audio.channels as u32;
-                    let sample_rate = audio.sample_rate as u32;
-
-                    if self.ebu_b.is_none() || self.ebu_b.as_ref().unwrap().1 != channels || self.ebu_b.as_ref().unwrap().2 != sample_rate {
-                        if let Ok(ebu) = EbuR128::new(channels, sample_rate, Mode::I | Mode::M | Mode::S | Mode::TRUE_PEAK) {
-                            self.ebu_b = Some((ebu, channels, sample_rate));
-                        }
-                    }
-
-                    if let Some((ebu, stored_ch, stored_rate)) = &mut self.ebu_b {
-                        if channels == 1 {
-                            let mut stereo = Vec::with_capacity(audio.samples.len() * 2);
-                            for &s in &audio.samples {
-                                stereo.push(s);
-                                stereo.push(s);
-                            }
-                            if *stored_ch != 2 {
-                                if let Ok(new_ebu) = EbuR128::new(2, sample_rate, Mode::I | Mode::M | Mode::S | Mode::TRUE_PEAK) {
-                                    *ebu = new_ebu;
-                                    *stored_ch = 2;
-                                    *stored_rate = sample_rate;
-                                }
-                            }
-                            let _ = ebu.add_frames_f32(&stereo);
-                        } else {
-                            let _ = ebu.add_frames_f32(&audio.samples);
-                        }
-
-                        let chs = *stored_ch;
-                        tp_b[0] = tp_b[0].max(ebu.prev_true_peak(0).unwrap_or(0.0));
-                        tp_b[1] = tp_b[1].max(if chs > 1 { ebu.prev_true_peak(1).unwrap_or(0.0) } else { ebu.prev_true_peak(0).unwrap_or(0.0) });
-
-                        self.view.loudness_b = LoudnessResult {
-                            momentary: ebu.loudness_momentary().unwrap_or(-120.0),
-                            short_term: ebu.loudness_shortterm().unwrap_or(-120.0),
-                            integrated: ebu.loudness_global().unwrap_or(-120.0),
-                            true_peak: tp_b,
-                        };
-                    }
-
-                    sink.append(rodio::buffer::SamplesBuffer::new(
-                        audio.channels,
-                        audio.sample_rate,
-                        audio.samples,
-                    ));
-                }
-            }
-        }
-        if !processed_b {
-            self.view.loudness_b.true_peak = [0.0, 0.0];
-        }
-    }
-
-    fn apply_sink_volumes(&mut self) {
-        if let Some(sink) = &self.sink_a {
-            if self.view.mute_a {
-                sink.set_volume(0.0);
-            } else {
-                sink.set_volume(1.0); // Hardcoded fixed volume
-            }
-        }
-        if let Some(sink) = &self.sink_b {
-            if self.view.mute_b {
-                sink.set_volume(0.0);
-            } else {
-                sink.set_volume(1.0); // Hardcoded fixed volume
-            }
-        }
-    }
-
-    fn handle_keyboard_input(&mut self, ctx: &egui::Context) {
-        if ctx.wants_keyboard_input() {
-            return;
-        }
-        ctx.input(|i| {
-            if i.key_pressed(egui::Key::Space) {
-                self.pending_play_pause_toggle = true;
-            }
-            if i.key_pressed(egui::Key::ArrowRight) {
-                self.pending_key_action = PendingKeyAction::StepFwd;
-            }
-            if i.key_pressed(egui::Key::ArrowLeft) {
-                self.pending_key_action = PendingKeyAction::StepBck;
-            }
-            if i.key_pressed(egui::Key::Home) {
-                self.pending_key_action = PendingKeyAction::Seek(0.0);
-            }
-            if i.key_pressed(egui::Key::Y) {
-                self.pending_key_action = PendingKeyAction::CycleMode;
-            }
-            if i.key_pressed(egui::Key::L) {
-                self.pending_key_action = PendingKeyAction::SideBySide;
-            }
-            if i.key_pressed(egui::Key::Num1) {
-                self.pending_key_action = PendingKeyAction::SplitPos0;
-            }
-            if i.key_pressed(egui::Key::Num2) {
-                self.pending_key_action = PendingKeyAction::SplitPos1;
-            }
-            if i.key_pressed(egui::Key::Num3) {
-                self.pending_key_action = PendingKeyAction::ToggleHud;
-            }
-            if i.key_pressed(egui::Key::Num4) {
-                self.pending_key_action = PendingKeyAction::Zoom(1.0);
-            }
-            if i.key_pressed(egui::Key::Num5) {
-                self.pending_key_action = PendingKeyAction::Zoom(0.5);
-            }
-            if i.key_pressed(egui::Key::Num6) {
-                self.pending_key_action = PendingKeyAction::Zoom(1.0);
-            }
-            if i.key_pressed(egui::Key::Num7) {
-                self.pending_key_action = PendingKeyAction::Zoom(2.0);
-            }
-            if i.key_pressed(egui::Key::Num8) {
-                self.pending_key_action = PendingKeyAction::Zoom(4.0);
-            }
-            if i.key_pressed(egui::Key::Num9) {
-                self.pending_key_action = PendingKeyAction::Zoom(8.0);
-            }
-            if i.key_pressed(egui::Key::F) {
-                log::trace!("Key 'F': xcap OS-native capture");
-                let dir_for_thread = self.view.screenshot_dir.clone();
-
-                std::thread::spawn(move || {
-                    let mut success = false;
-                    log::trace!("xcap: scanning OS windows");
-                    if let Ok(windows) = xcap::Window::all() {
-                        for window in windows {
-                            if let Ok(title) = window.title() {
-                                if title.contains("Production Media") || title.contains("Diferencial") {
-                                    log::trace!("xcap: window -> {}", title);
-                                    if let Ok(img_buf) = window.capture_image() {
-                                        if let Some(dir) = dir_for_thread.as_ref() {
-                                            let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
-                                            let filename = format!("WPP_QC_{timestamp}.png");
-                                            let path = dir.join(filename);
-                                            log::trace!("xcap: writing PNG to {:?}", path);
-
-                                            if let Err(e) = img_buf.save(&path) {
-                                                log::error!("xcap disk write error: {}", e);
-                                            } else {
-                                                log::trace!("xcap: screenshot saved");
-                                                success = true;
-                                            }
-                                        }
-                                    } else {
-                                        log::error!("xcap failed to read window buffer");
-                                    }
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    if !success {
-                        log::error!("xcap: target WPP window not found or capture failed");
-                    }
-                });
-            }
-            if i.key_pressed(egui::Key::R) {
-                self.pending_key_action = PendingKeyAction::ResetZoomPan;
-            }
-            if i.key_pressed(egui::Key::S) {
-                self.pending_key_action = PendingKeyAction::SwapVideos;
-            }
-
-            let now = i.time;
-            let repeat_delay = 0.25;
-            let repeat_interval = 0.05;
-
-            if i.key_down(egui::Key::ArrowRight) {
-                if i.key_pressed(egui::Key::ArrowRight)
-                    || (now - self.last_step_time) > repeat_interval
-                {
-                    let delay_ok = (now - self.last_step_time) > repeat_delay;
-                    if i.key_pressed(egui::Key::ArrowRight) || delay_ok {
-                        self.pending_key_action = PendingKeyAction::StepFwd;
-                        self.last_step_time = now;
-                    }
-                }
-            } else if i.key_down(egui::Key::ArrowLeft) {
-                if i.key_pressed(egui::Key::ArrowLeft)
-                    || (now - self.last_step_time) > repeat_interval
-                {
-                    let delay_ok = (now - self.last_step_time) > repeat_delay;
-                    if i.key_pressed(egui::Key::ArrowLeft) || delay_ok {
-                        self.pending_key_action = PendingKeyAction::StepBck;
-                        self.last_step_time = now;
-                    }
-                }
-            } else {
-                self.last_step_time = 0.0;
-            }
-        });
-    }
-
-    fn show_hud_panels(&mut self, ctx: &egui::Context, is_first_frame: bool) {
-        if !self.view.show_hud || is_first_frame {
-            return;
-        }
-        egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
-            crate::ui::controls::show_menu_bar(ui, self);
-        });
-        if self.view.show_left_panel {
-            egui::SidePanel::left("info_panel")
-                .resizable(true)
-                .default_width(260.0)
-                .min_width(200.0)
-                .max_width(340.0)
-                .show(ctx, |ui| {
-                    crate::ui::info_panel::show(ui, self);
-                });
-        }
-        if self.view.show_right_panel {
-            egui::SidePanel::right("audio_panel")
-                .resizable(true)
-                .default_width(110.0)
-                .min_width(90.0)
-                .max_width(220.0)
-                .show(ctx, |ui| {
-                    crate::ui::controls::show_audio_panel(ui, self);
-                });
-        }
-        egui::TopBottomPanel::bottom("timeline").show(ctx, |ui| {
-            crate::ui::timeline::show(ui, self);
-        });
-        
-        crate::ui::markers::show(ctx, self);
     }
 
     fn show_clean_feed_viewport(&mut self, ctx: &egui::Context) {
@@ -1214,11 +803,8 @@ impl DiffPlayerApp {
                         egui::Color32::WHITE,
                     );
                     let bg_rect = galley.rect.translate(text_pos.to_vec2()).expand(6.0);
-                    ui.painter().rect_filled(
-                        bg_rect,
-                        4.0,
-                        egui::Color32::from_black_alpha(150),
-                    );
+                    ui.painter()
+                        .rect_filled(bg_rect, 4.0, egui::Color32::from_black_alpha(150));
                     ui.painter().galley(text_pos, galley, egui::Color32::WHITE);
                 });
             },
@@ -1272,7 +858,10 @@ impl DiffPlayerApp {
                 ui.label(egui::RichText::new(&msg).size(15.0));
                 ui.add_space(25.0);
                 let ok = crate::ui::design::dialog_ok(lang);
-                if ui.button(egui::RichText::new(format!("   {ok}   ")).strong()).clicked() {
+                if ui
+                    .button(egui::RichText::new(format!("   {ok}   ")).strong())
+                    .clicked()
+                {
                     open = false;
                 }
                 ui.add_space(10.0);
@@ -1299,13 +888,37 @@ impl eframe::App for DiffPlayerApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
             self.focus_visible_frames_left -= 1;
         }
-        // Process deferred play/pause toggle (Space) so we don't run play_both/pause_both from inside ctx.input() (avoids re-entrancy/deadlock on macOS).
-        if self.pending_play_pause_toggle {
-            self.pending_play_pause_toggle = false;
-            if self.playback.is_playing {
-                self.pause_both(ctx);
-            } else {
+        // Process deferred play/pause action so we don't run play_both/pause_both from inside ctx.input() (avoids re-entrancy/deadlock on macOS).
+        match std::mem::take(&mut self.pending_transport_action) {
+            PendingTransportAction::None => {}
+            PendingTransportAction::Play => {
+                if !self.playback.is_playing {
+                    self.play_both(ctx);
+                }
+            }
+            PendingTransportAction::Pause => {
+                if self.playback.is_playing {
+                    self.pause_both(ctx);
+                }
+            }
+            PendingTransportAction::Toggle => {
+                if self.playback.is_playing {
+                    self.pause_both(ctx);
+                } else {
+                    self.play_both(ctx);
+                }
+            }
+        }
+
+        if let Some(play_time) = self.view.pending_play_after_delay {
+            if std::time::Instant::now() >= play_time {
+                self.view.pending_play_after_delay = None;
+                if let Some(saved_loop) = self.view.saved_loop_playback.take() {
+                    self.view.loop_playback = saved_loop;
+                }
                 self.play_both(ctx);
+            } else {
+                ctx.request_repaint(); // ensure we keep ticking to hit the delay exactly
             }
         }
         // Process deferred key action (arrows, Home, Y, L, Num1–9, R, S) so we never call ctx or decoder from inside ctx.input().
@@ -1349,23 +962,6 @@ impl eframe::App for DiffPlayerApp {
                 self.view.pan_v = 0.0;
             }
             PendingKeyAction::SwapVideos => self.swap_videos_inner(ctx),
-            PendingKeyAction::SetLoopIn => self.set_loop_in(),
-            PendingKeyAction::SetLoopOut => self.set_loop_out(),
-            PendingKeyAction::ToggleLoopRange => self.toggle_loop_range(),
-            PendingKeyAction::ClearLoopRange => {
-                self.playback.loop_in = None;
-                self.playback.loop_out = None;
-                self.playback.loop_range_active = false;
-            }
-            PendingKeyAction::AddMarker => {
-                let m = crate::types::Marker {
-                    pts: self.playback.current_pts,
-                    note: "New Marker".to_string(),
-                    color: [0.0, 0.7, 1.0],
-                    channel_hint: None,
-                };
-                self.session.markers.push(m);
-            }
         }
         // When proxy generation just finished: load proxy.mkv into the target channel.
         self.complete_proxy_if_ready(ctx);
@@ -1402,14 +998,7 @@ impl eframe::App for DiffPlayerApp {
 
         self.handle_keyboard_input(ctx);
 
-        // ── UI Overlay conditionally rendered ───────────────────────────────
-        // Skip HUD on first frame (macOS Metal): minimal first frame so present can complete.
-        self.show_hud_panels(ctx, is_first_frame);
-
-        // ── Central canvas ──────────────────────────────────────────────────
-        egui::CentralPanel::default().show(ctx, |ui| {
-            show_canvas(ui, self, frame);
-        });
+        self.show_main_layout(ctx, frame, is_first_frame);
 
         self.show_clean_feed_viewport(ctx);
         self.show_proxy_progress_window(ctx);
@@ -1444,473 +1033,6 @@ impl eframe::App for DiffPlayerApp {
 // ---------------------------------------------------------------------------
 //  Video canvas with zoom / pan interaction
 // ---------------------------------------------------------------------------
-
-fn show_canvas(ui: &mut egui::Ui, app: &mut DiffPlayerApp, _frame: &mut eframe::Frame) {
-    let available = ui.available_rect_before_wrap();
-    app.view.canvas_rect = available;
-
-    let response = ui.allocate_rect(available, egui::Sense::click_and_drag());
-
-    // -- Mouse wheel zoom ---------------------------------------------------
-    let scroll_delta = ui.input(|i| i.smooth_scroll_delta.y);
-    if response.hovered() && scroll_delta != 0.0 {
-        let zoom_factor = if scroll_delta > 0.0 {
-            1.1f32
-        } else {
-            1.0 / 1.1
-        };
-        app.view.zoom = (app.view.zoom * zoom_factor).clamp(0.25, 32.0);
-    }
-
-    // -- Drag to pan OR drag split line (Available in all modes) -------------
-    // Pan is only active when zoomed in (zoom > 1.0). At fit-to-frame only the
-    // split divider can be dragged. Split line is vertical or horizontal per split_horizontal.
-    if response.drag_started() {
-        let pos = response.interact_pointer_pos().unwrap_or_default();
-        let near_split = if app.view.split_horizontal {
-            let split_y = available.top() + app.view.split_pos * available.height();
-            (pos.y - split_y).abs() < 15.0
-        } else {
-            let split_x = available.left() + app.view.split_pos * available.width();
-            (pos.x - split_x).abs() < 15.0
-        };
-        if near_split {
-            app.dragging_split = true;
-        } else {
-            app.dragging_split = false;
-            if app.view.zoom > 1.0 {
-                app.drag_start = Some((pos, app.view.pan_u, app.view.pan_v));
-            }
-        }
-    }
-
-    if response.dragged() {
-        if app.dragging_split {
-            let pos = response.interact_pointer_pos().unwrap_or_default();
-            if app.view.split_horizontal {
-                let relative_y = (pos.y - available.top()) / available.height();
-                app.view.split_pos = relative_y.clamp(0.0, 1.0);
-            } else {
-                let relative_x = (pos.x - available.left()) / available.width();
-                app.view.split_pos = relative_x.clamp(0.0, 1.0);
-            }
-            ui.ctx().request_repaint();
-        } else if let Some((start_pos, start_pu, start_pv)) = app.drag_start {
-            let delta = response.interact_pointer_pos().unwrap_or_default() - start_pos;
-            let uv_delta_u = -delta.x / available.width() / app.view.zoom;
-            let uv_delta_v = -delta.y / available.height() / app.view.zoom;
-            app.view.pan_u = (start_pu + uv_delta_u).clamp(-0.5, 0.5);
-            app.view.pan_v = (start_pv + uv_delta_v).clamp(-0.5, 0.5);
-            ui.ctx().request_repaint();
-        }
-    }
-
-    if response.drag_stopped() {
-        app.drag_start = None;
-        app.dragging_split = false;
-    }
-
-    // -- Cursor hint for dragging split (Available in all modes) ------------
-    if let Some(ptr) = ui.ctx().pointer_hover_pos() {
-        let near_split = if app.view.split_horizontal {
-            let split_y = available.top() + app.view.split_pos * available.height();
-            available.contains(ptr) && (ptr.y - split_y).abs() < 10.0
-        } else {
-            let split_x = available.left() + app.view.split_pos * available.width();
-            available.contains(ptr) && (ptr.x - split_x).abs() < 10.0
-        };
-        if near_split {
-            ui.ctx().set_cursor_icon(if app.view.split_horizontal {
-                egui::CursorIcon::ResizeVertical
-            } else {
-                egui::CursorIcon::ResizeHorizontal
-            });
-        }
-    }
-
-    // -- Double-click to reset zoom -----------------------------------------
-    if response.double_clicked() {
-        app.view.zoom = 1.0;
-        app.view.pan_u = 0.0;
-        app.view.pan_v = 0.0;
-    }
-
-    // -- Draw the wgpu render callback into this rect ----------------------
-    // Skip on first frame so macOS window can appear (first Wgpu present can block).
-    if app.frame_count > 1 {
-        let renderer_clone = Arc::clone(&app.renderer);
-        ui.painter().add(egui_wgpu::Callback::new_paint_callback(
-            available,
-            RenderCallback {
-                renderer: renderer_clone,
-            },
-        ));
-    } else {
-        ui.painter()
-            .rect_filled(available, 0.0, egui::Color32::from_rgb(0, 0, 0));
-    }
-
-    // -- Safe zones overlay (video_rect + zoom/pan) -------------------------
-    // In SideBySide mode draw on both halves (A left, B right); otherwise once on full canvas.
-    if app.view.safe_zone != SafeZoneMode::None {
-        let zoom = app.view.zoom;
-        let visible_left = 0.5 - 0.5 / zoom + app.view.pan_u;
-        let visible_right = 0.5 + 0.5 / zoom + app.view.pan_u;
-        let visible_top = 0.5 - 0.5 / zoom + app.view.pan_v;
-        let visible_bottom = 0.5 + 0.5 / zoom + app.view.pan_v;
-
-        let draw_safe_zones = |container: egui::Rect, vw: f32, vh: f32| {
-            let cw = container.width();
-            let ch = container.height();
-            let video_aspect = vw / vh;
-            let container_aspect = cw / ch;
-            let video_rect = if video_aspect >= container_aspect {
-                let h = cw / video_aspect;
-                let top = container.center().y - h * 0.5;
-                egui::Rect::from_min_max(
-                    egui::Pos2::new(container.left(), top),
-                    egui::Pos2::new(container.right(), top + h),
-                )
-            } else {
-                let w = ch * video_aspect;
-                let left = container.center().x - w * 0.5;
-                egui::Rect::from_min_max(
-                    egui::Pos2::new(left, container.top()),
-                    egui::Pos2::new(left + w, container.bottom()),
-                )
-            };
-            let uv_to_screen = |u: f32, v: f32| {
-                let x = video_rect.left()
-                    + (u - visible_left) / (visible_right - visible_left) * video_rect.width();
-                let y = video_rect.top()
-                    + (v - visible_top) / (visible_bottom - visible_top) * video_rect.height();
-                egui::Pos2::new(x, y)
-            };
-
-            match app.view.safe_zone {
-                SafeZoneMode::None => {}
-                SafeZoneMode::TvEbu => {
-                    let stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(0, 200, 255));
-                    let action_min = uv_to_screen(0.035, 0.035);
-                    let action_max = uv_to_screen(0.965, 0.965);
-                    let action_rect = egui::Rect::from_min_max(action_min, action_max);
-                    ui.painter().rect_stroke(action_rect, 0.0, stroke);
-                    let title_min = uv_to_screen(0.10, 0.05);
-                    let title_max = uv_to_screen(0.90, 0.95);
-                    let title_rect = egui::Rect::from_min_max(title_min, title_max);
-                    ui.painter().rect_stroke(title_rect, 0.0, stroke);
-                    let center = uv_to_screen(0.5, 0.5);
-                    let cross_half = 10.0;
-                    ui.painter().line_segment(
-                        [
-                            egui::Pos2::new(center.x - cross_half, center.y),
-                            egui::Pos2::new(center.x + cross_half, center.y),
-                        ],
-                        stroke,
-                    );
-                    ui.painter().line_segment(
-                        [
-                            egui::Pos2::new(center.x, center.y - cross_half),
-                            egui::Pos2::new(center.x, center.y + cross_half),
-                        ],
-                        stroke,
-                    );
-                }
-                SafeZoneMode::Social => {
-                    let danger_fill = egui::Color32::from_black_alpha(150);
-                    let top_danger =
-                        egui::Rect::from_min_max(uv_to_screen(0.0, 0.0), uv_to_screen(1.0, 0.15));
-                    let bottom_danger =
-                        egui::Rect::from_min_max(uv_to_screen(0.0, 0.78), uv_to_screen(1.0, 1.0));
-                    let right_danger =
-                        egui::Rect::from_min_max(uv_to_screen(0.85, 0.0), uv_to_screen(1.0, 1.0));
-                    let left_danger =
-                        egui::Rect::from_min_max(uv_to_screen(0.0, 0.0), uv_to_screen(0.05, 1.0));
-                    ui.painter().rect_filled(top_danger, 0.0, danger_fill);
-                    ui.painter().rect_filled(bottom_danger, 0.0, danger_fill);
-                    ui.painter().rect_filled(right_danger, 0.0, danger_fill);
-                    ui.painter().rect_filled(left_danger, 0.0, danger_fill);
-                    let safe_min = uv_to_screen(0.05, 0.15);
-                    let safe_max = uv_to_screen(0.85, 0.78);
-                    let safe_rect = egui::Rect::from_min_max(safe_min, safe_max);
-                    let stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(0, 200, 0));
-                    ui.painter().rect_stroke(safe_rect, 0.0, stroke);
-                }
-            }
-        };
-
-        if app.view.mode == CompareMode::SideBySide {
-            let mid_x = available.center().x;
-            let left_rect =
-                egui::Rect::from_min_max(available.min, egui::pos2(mid_x, available.max.y));
-            let right_rect =
-                egui::Rect::from_min_max(egui::pos2(mid_x, available.min.y), available.max);
-            let (vw_a, vh_a) = app
-                .decoder_a_meta()
-                .map(|m| (m.width as f32, m.height as f32))
-                .unwrap_or((16.0, 9.0));
-            let (vw_b, vh_b) = app
-                .decoder_b_meta()
-                .map(|m| (m.width as f32, m.height as f32))
-                .unwrap_or((16.0, 9.0));
-            draw_safe_zones(left_rect, vw_a, vh_a);
-            draw_safe_zones(right_rect, vw_b, vh_b);
-        } else {
-            let (vw, vh) = app
-                .decoder_a_meta()
-                .or_else(|| app.decoder_b_meta())
-                .map(|m| (m.width as f32, m.height as f32))
-                .unwrap_or((16.0, 9.0));
-            draw_safe_zones(available, vw, vh);
-        }
-    }
-
-    // -- OS file drag-and-drop handling ------------------------------------
-    let hovered_files = ui.ctx().input(|i| i.raw.hovered_files.clone());
-    let dropped_files = ui.ctx().input(|i| i.raw.dropped_files.clone());
-
-    // IMPORTANT: Handle the actual drop FIRST, before we potentially clear
-    // drag_drop_hover_pos in the else branch below. On the drop frame,
-    // hovered_files is already empty but drag_drop_hover_pos still holds
-    // the last valid cursor position from the previous frame.
-    if !dropped_files.is_empty() {
-        // Collect paths for EXR or video handling
-        let paths: Vec<PathBuf> = dropped_files
-            .iter()
-            .filter_map(|f| f.path.as_ref().map(PathBuf::from))
-            .collect();
-
-        // EXR: single directory -> proxy from folder; all .exr files -> proxy from list. Target channel from drop position.
-        let mid_x = available.center().x;
-        let hover_x = app
-            .drag_drop_hover_pos
-            .or_else(|| ui.ctx().pointer_hover_pos())
-            .unwrap_or(available.center())
-            .x;
-        let target_chan = if hover_x < mid_x {
-            crate::types::Channel::A
-        } else {
-            crate::types::Channel::B
-        };
-        if paths.len() == 1 && paths[0].is_dir() {
-            app.start_proxy_from_exr_input_dir(paths[0].clone(), target_chan, ui.ctx());
-            app.drag_drop_hover_pos = None;
-            return;
-        }
-        let all_exr = !paths.is_empty()
-            && paths.iter().all(|p| {
-                p.extension()
-                    .map(|e| {
-                        e.to_str()
-                            .map(|s| s.eq_ignore_ascii_case("exr"))
-                            .unwrap_or(false)
-                    })
-                    .unwrap_or(false)
-            });
-        if all_exr {
-            app.start_proxy_from_exr_input_files(paths, target_chan, ui.ctx());
-            app.drag_drop_hover_pos = None;
-            return;
-        }
-
-        // Video handling
-        let valid_extensions = [
-            "mp4", "mov", "mxf", "mkv", "avi", "prores", "mts", "mpg", "mpeg", "ts",
-        ];
-        let mut valid_paths = Vec::new();
-        let mut invalid_files = Vec::new();
-
-        for path in &paths {
-            let ext = path
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("")
-                .to_lowercase();
-            if valid_extensions.contains(&ext.as_str()) {
-                valid_paths.push(path.to_string_lossy().to_string());
-            } else {
-                invalid_files.push(
-                    path.file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .to_string(),
-                );
-            }
-        }
-
-        if !invalid_files.is_empty() {
-            app.error_title = Some("Formato no soportado".to_string());
-            app.error_message = Some(format!(
-                "Los siguientes archivos no son formatos soportados:\n{}",
-                invalid_files.join(", ")
-            ));
-        } else if valid_paths.len() > 2 {
-            app.error_title = Some("Máximo 2 videos".to_string());
-            app.error_message =
-                Some("Solo puedes arrastrar un máximo de 2 videos a la vez.".to_string());
-        } else if valid_paths.len() == 2 {
-            valid_paths.sort(); // A goes to Slot A, B goes to Slot B alphabetically
-            app.open_video_a_from_path(valid_paths[0].clone(), ui.ctx());
-            app.open_video_b_from_path(valid_paths[1].clone(), ui.ctx());
-        } else if !valid_paths.is_empty() {
-            let mid_x = available.center().x;
-            let hover_x = app
-                .drag_drop_hover_pos
-                .or_else(|| ui.ctx().pointer_hover_pos())
-                .unwrap_or(available.center())
-                .x;
-            if hover_x < mid_x {
-                app.open_video_a_from_path(valid_paths[0].clone(), ui.ctx());
-            } else {
-                app.open_video_b_from_path(valid_paths[0].clone(), ui.ctx());
-            }
-        }
-
-        app.drag_drop_hover_pos = None;
-    } else if !hovered_files.is_empty() {
-        // Files are being dragged over — update position and draw overlay
-        if let Some(ptr) = ui.ctx().pointer_hover_pos() {
-            app.drag_drop_hover_pos = Some(ptr);
-        }
-
-        let mid_x = available.center().x;
-        let hover_x = app.drag_drop_hover_pos.map(|p| p.x).unwrap_or(mid_x);
-        let targeting_a = hover_x < mid_x;
-
-        let (a_alpha, b_alpha) = if targeting_a {
-            (80u8, 30u8)
-        } else {
-            (30u8, 80u8)
-        };
-
-        let left_rect = egui::Rect::from_min_max(available.min, egui::pos2(mid_x, available.max.y));
-        let right_rect =
-            egui::Rect::from_min_max(egui::pos2(mid_x, available.min.y), available.max);
-
-        ui.painter().rect_filled(
-            left_rect,
-            0.0,
-            egui::Color32::from_rgba_premultiplied(80, 180, 100, a_alpha),
-        );
-        ui.painter().rect_filled(
-            right_rect,
-            0.0,
-            egui::Color32::from_rgba_premultiplied(80, 130, 220, b_alpha),
-        );
-
-        let is_es = app.view.lang == Language::Es;
-        let label_a = if is_es {
-            "Soltar aquí → VIDEO A"
-        } else {
-            "Drop here → VIDEO A"
-        };
-        let label_b = if is_es {
-            "Soltar aquí → VIDEO B"
-        } else {
-            "Drop here → VIDEO B"
-        };
-        ui.painter().text(
-            left_rect.center(),
-            egui::Align2::CENTER_CENTER,
-            label_a,
-            egui::FontId::proportional(22.0),
-            egui::Color32::from_rgba_premultiplied(220, 255, 220, 230),
-        );
-        ui.painter().text(
-            right_rect.center(),
-            egui::Align2::CENTER_CENTER,
-            label_b,
-            egui::FontId::proportional(22.0),
-            egui::Color32::from_rgba_premultiplied(200, 220, 255, 230),
-        );
-        ui.painter().vline(
-            mid_x,
-            available.y_range(),
-            egui::Stroke::new(
-                2.0,
-                egui::Color32::from_rgba_premultiplied(255, 255, 255, 120),
-            ),
-        );
-
-        ui.ctx().request_repaint();
-    } else {
-        // Nothing dragged — clear stored position
-        app.drag_drop_hover_pos = None;
-    }
-
-    // -- Overlay: "No video" message when nothing is loaded ----------------
-    let has_a = app.decoder_a.is_some();
-    let has_b = app.decoder_b.is_some();
-    if !has_a || !has_b {
-        let center = available.center();
-        let is_es = app.view.lang == Language::Es;
-        let text = if !has_a && !has_b {
-            if is_es {
-                "Abre el Vídeo A y el Vídeo B para empezar la comparación"
-            } else {
-                "Open Video A and Video B to begin comparison"
-            }
-        } else if !has_a {
-            if is_es {
-                "Abre el Vídeo A  ←  (panel izquierdo)"
-            } else {
-                "Open Video A  ←  (left panel)"
-            }
-        } else {
-            if is_es {
-                "Abre el Vídeo B  →  (panel izquierdo)"
-            } else {
-                "Open Video B  →  (left panel)"
-            }
-        };
-        ui.painter().text(
-            center,
-            egui::Align2::CENTER_CENTER,
-            text,
-            egui::FontId::proportional(20.0),
-            ui.visuals().text_color().gamma_multiply(0.5),
-        );
-    }
-
-    // -- Zoom indicator overlay (top-right of canvas) ----------------------
-    if (app.view.zoom - 1.0).abs() > 0.01 {
-        let zoom_text = format!("{:.1}×", app.view.zoom);
-        let pos = egui::pos2(available.right() - 8.0, available.top() + 8.0);
-        ui.painter().text(
-            pos,
-            egui::Align2::RIGHT_TOP,
-            &zoom_text,
-            egui::FontId::monospace(13.0),
-            egui::Color32::from_rgba_premultiplied(200, 200, 100, 200),
-        );
-    }
-
-    // -- Frame counter overlay (bottom-left of canvas, unobtrusive) --------
-    // Shows permanently, including during screenshots.
-    {
-        let fps_a = app.decoder_a_meta().map(|m| m.fps).unwrap_or(25.0);
-        let current_pts = app.playback().current_pts;
-        let frame_num = (current_pts * fps_a).round() as u64;
-        let is_es = app.view().lang == Language::Es;
-
-        let frame_text = format!("{} {}", if is_es { "Fr." } else { "Frame" }, frame_num);
-        let pos = egui::pos2(available.left() + 8.0, available.bottom() - 8.0);
-        ui.painter().text(
-            pos,
-            egui::Align2::LEFT_BOTTOM,
-            &frame_text,
-            egui::FontId::monospace(14.0),
-            egui::Color32::from_black_alpha(150), // Subtle shadow
-        );
-        ui.painter().text(
-            pos - egui::Vec2::new(1.0, 1.0),
-            egui::Align2::LEFT_BOTTOM,
-            &frame_text,
-            egui::FontId::monospace(14.0),
-            egui::Color32::from_white_alpha(150), // Unobtrusive text
-        );
-    }
-}
 
 fn default_rect() -> egui::Rect {
     egui::Rect::NOTHING
@@ -1989,18 +1111,6 @@ impl DiffPlayerApp {
             }
         }
     }
-    pub fn export_csv(&self) {
-        if let Ok(mut wtr) = csv::Writer::from_path("export_diffplayerqc.csv") {
-            let _ = wtr.write_record(&["Timecode", "Note"]);
-            for m in &self.session.markers {
-                let _ = wtr.write_record(&[
-                    crate::ui::markers::format_timecode(m.pts, 25.0),
-                    m.note.clone(),
-                ]);
-            }
-            let _ = wtr.flush();
-        }
-    }
     pub fn save_session(&mut self) {}
     pub fn load_session(&mut self, _ctx: &egui::Context) {}
     pub fn decoder_a_meta(&self) -> Option<&ColorMetadata> {
@@ -2028,10 +1138,10 @@ impl DiffPlayerApp {
         self.open_video_from_path(path, Channel::B, ctx);
     }
     pub fn do_play(&mut self, _ctx: &egui::Context) {
-        self.pending_play_pause_toggle = true;
+        self.pending_transport_action = PendingTransportAction::Play;
     }
     pub fn do_pause(&mut self, _ctx: &egui::Context) {
-        self.pending_play_pause_toggle = true;
+        self.pending_transport_action = PendingTransportAction::Pause;
     }
     /// Enqueue step forward; processed at start of next update (avoids re-entrancy from keyboard/UI).
     pub fn do_step_fwd(&mut self, _ctx: &egui::Context) {

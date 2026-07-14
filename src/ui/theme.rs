@@ -1,222 +1,172 @@
-//! egui visual presets. Selection/hover accents are defined per palette below; the timeline and
-//! several controls use [`crate::ui::design::ACCENT_PRIMARY`] so the default blue accent stays
-//! consistent across widgets.
+#![allow(dead_code)]
+use egui::{Color32, FontFamily, FontId, Rounding, Stroke, Style, TextStyle, Visuals};
 
-use egui::{Color32, Context, Stroke, Visuals};
+pub const BG_APP: Color32 = Color32::from_rgb(18, 18, 20);
+pub const BG_PANEL: Color32 = Color32::from_rgb(25, 25, 28);
+pub const BG_PANEL_ALT: Color32 = Color32::from_rgb(31, 31, 35);
+pub const BG_RAISED: Color32 = Color32::from_rgb(38, 38, 43);
 
-pub fn apply_theme(ctx: &Context, theme: crate::types::Theme) {
-    match theme {
-        crate::types::Theme::Dark => ctx.set_visuals(Visuals::dark()),
-        crate::types::Theme::Light => ctx.set_visuals(Visuals::light()),
-        _ => {
-            let (is_dark, bg, panel, accent, text) = match theme {
-                crate::types::Theme::Rust => (
-                    true,
-                    Color32::from_rgb(43, 43, 43),
-                    Color32::from_rgb(32, 32, 32),
-                    Color32::from_rgb(252, 60, 20),
-                    Color32::from_rgb(240, 230, 220),
-                ),
-                crate::types::Theme::SolarizedDark => (
-                    true,
-                    Color32::from_rgb(0, 43, 54),
-                    Color32::from_rgb(7, 54, 66),
-                    Color32::from_rgb(181, 137, 0),
-                    Color32::from_rgb(131, 148, 150),
-                ),
-                crate::types::Theme::SolarizedLight => (
-                    false,
-                    Color32::from_rgb(253, 246, 227),
-                    Color32::from_rgb(238, 232, 213),
-                    Color32::from_rgb(38, 139, 210),
-                    Color32::from_rgb(101, 123, 131),
-                ),
-                crate::types::Theme::Dracula => (
-                    true,
-                    Color32::from_rgb(40, 42, 54),
-                    Color32::from_rgb(68, 71, 90),
-                    Color32::from_rgb(189, 147, 249),
-                    Color32::from_rgb(248, 248, 242),
-                ),
-                crate::types::Theme::Gruvbox => (
-                    true,
-                    Color32::from_rgb(40, 40, 40),
-                    Color32::from_rgb(60, 56, 54),
-                    Color32::from_rgb(250, 189, 47),
-                    Color32::from_rgb(235, 219, 178),
-                ),
-                crate::types::Theme::Nord => (
-                    true,
-                    Color32::from_rgb(46, 52, 64),
-                    Color32::from_rgb(59, 66, 82),
-                    Color32::from_rgb(136, 192, 208),
-                    Color32::from_rgb(236, 239, 244),
-                ),
-                crate::types::Theme::Monokai => (
-                    true,
-                    Color32::from_rgb(39, 40, 34),
-                    Color32::from_rgb(62, 61, 50),
-                    Color32::from_rgb(249, 38, 114),
-                    Color32::from_rgb(248, 248, 242),
-                ),
-                crate::types::Theme::OneDark => (
-                    true,
-                    Color32::from_rgb(40, 44, 52),
-                    Color32::from_rgb(44, 49, 58),
-                    Color32::from_rgb(97, 175, 239),
-                    Color32::from_rgb(171, 178, 191),
-                ),
-                crate::types::Theme::OneLight => (
-                    false,
-                    Color32::from_rgb(250, 250, 250),
-                    Color32::from_rgb(240, 240, 240),
-                    Color32::from_rgb(82, 111, 255),
-                    Color32::from_rgb(56, 58, 66),
-                ),
-                crate::types::Theme::Catppuccin => (
-                    true,
-                    Color32::from_rgb(30, 30, 46),
-                    Color32::from_rgb(24, 24, 37),
-                    Color32::from_rgb(203, 166, 247),
-                    Color32::from_rgb(205, 214, 244),
-                ),
-                crate::types::Theme::TokyoNight => (
-                    true,
-                    Color32::from_rgb(26, 27, 38),
-                    Color32::from_rgb(22, 22, 30),
-                    Color32::from_rgb(122, 162, 247),
-                    Color32::from_rgb(192, 202, 245),
-                ),
-                crate::types::Theme::NightOwl => (
-                    true,
-                    Color32::from_rgb(1, 22, 39),
-                    Color32::from_rgb(11, 41, 66),
-                    Color32::from_rgb(130, 170, 255),
-                    Color32::from_rgb(214, 222, 235),
-                ),
-                crate::types::Theme::Ayc => (
-                    true,
-                    Color32::from_rgb(15, 20, 25),
-                    Color32::from_rgb(20, 25, 31),
-                    Color32::from_rgb(230, 180, 80),
-                    Color32::from_rgb(191, 186, 176),
-                ),
-                crate::types::Theme::MaterialDesign => (
-                    true,
-                    Color32::from_rgb(38, 50, 56),
-                    Color32::from_rgb(55, 71, 79),
-                    Color32::from_rgb(128, 203, 196),
-                    Color32::from_rgb(236, 239, 241),
-                ),
-                crate::types::Theme::Everforest => (
-                    true,
-                    Color32::from_rgb(43, 51, 57),
-                    Color32::from_rgb(50, 60, 65),
-                    Color32::from_rgb(167, 192, 128),
-                    Color32::from_rgb(211, 198, 170),
-                ),
-                crate::types::Theme::TomorrowNight => (
-                    true,
-                    Color32::from_rgb(29, 31, 33),
-                    Color32::from_rgb(40, 42, 46),
-                    Color32::from_rgb(129, 162, 190),
-                    Color32::from_rgb(197, 200, 198),
-                ),
-                crate::types::Theme::RosePine => (
-                    true,
-                    Color32::from_rgb(25, 23, 36),
-                    Color32::from_rgb(31, 29, 46),
-                    Color32::from_rgb(196, 167, 231),
-                    Color32::from_rgb(224, 222, 244),
-                ),
-                crate::types::Theme::SynthWave84 => (
-                    true,
-                    Color32::from_rgb(38, 35, 58),
-                    Color32::from_rgb(43, 33, 58),
-                    Color32::from_rgb(255, 126, 219),
-                    Color32::from_rgb(249, 42, 173),
-                ),
-                crate::types::Theme::Nordic => (
-                    true,
-                    Color32::from_rgb(36, 41, 51),
-                    Color32::from_rgb(46, 52, 64),
-                    Color32::from_rgb(143, 188, 187),
-                    Color32::from_rgb(216, 222, 233),
-                ),
-                crate::types::Theme::OceanicNext => (
-                    true,
-                    Color32::from_rgb(27, 43, 52),
-                    Color32::from_rgb(52, 61, 70),
-                    Color32::from_rgb(102, 153, 204),
-                    Color32::from_rgb(192, 197, 206),
-                ),
-                crate::types::Theme::Palenight => (
-                    true,
-                    Color32::from_rgb(41, 45, 62),
-                    Color32::from_rgb(50, 55, 77),
-                    Color32::from_rgb(199, 146, 234),
-                    Color32::from_rgb(191, 199, 213),
-                ),
-                crate::types::Theme::Powerlevel10k => (
-                    true,
-                    Color32::from_rgb(0, 0, 0),
-                    Color32::from_rgb(28, 28, 28),
-                    Color32::from_rgb(0, 135, 255),
-                    Color32::from_rgb(255, 255, 255),
-                ),
-                crate::types::Theme::Snazzy => (
-                    true,
-                    Color32::from_rgb(40, 42, 54),
-                    Color32::from_rgb(52, 53, 65),
-                    Color32::from_rgb(255, 92, 87),
-                    Color32::from_rgb(239, 240, 235),
-                ),
-                _ => (
-                    true,
-                    Color32::from_rgb(43, 43, 43),
-                    Color32::from_rgb(32, 32, 32),
-                    Color32::from_rgb(252, 60, 20),
-                    Color32::from_rgb(240, 230, 220),
-                ),
-            };
+pub const STROKE_SUBTLE: Color32 = Color32::from_rgb(52, 52, 58);
+pub const STROKE_STRONG: Color32 = Color32::from_rgb(75, 75, 84);
 
-            let mut visuals = if is_dark {
-                Visuals::dark()
-            } else {
-                Visuals::light()
-            };
-            visuals.widgets.noninteractive.bg_fill = if is_dark {
-                bg.linear_multiply(1.5)
-            } else {
-                bg.linear_multiply(0.9)
-            };
-            visuals.widgets.noninteractive.bg_stroke = Stroke::new(
-                1.0,
-                if is_dark {
-                    panel
-                } else {
-                    panel.linear_multiply(0.8)
-                },
+pub const TEXT_PRIMARY: Color32 = Color32::from_rgb(225, 225, 230);
+pub const TEXT_SECONDARY: Color32 = Color32::from_rgb(160, 160, 170);
+pub const TEXT_MUTED: Color32 = Color32::from_rgb(105, 105, 115);
+
+pub const ACCENT: Color32 = Color32::from_rgb(78, 156, 255);
+pub const ACCENT_HOVER: Color32 = Color32::from_rgb(105, 174, 255);
+
+pub const PLAYHEAD: Color32 = Color32::from_rgb(235, 70, 70);
+
+pub const OK: Color32 = Color32::from_rgb(66, 185, 120);
+pub const WARN: Color32 = Color32::from_rgb(230, 180, 64);
+pub const ERROR: Color32 = Color32::from_rgb(235, 80, 80);
+
+pub const A_COLOR: Color32 = Color32::from_rgb(83, 160, 255);
+pub const B_COLOR: Color32 = Color32::from_rgb(255, 153, 82);
+
+pub const VU_BG: Color32 = Color32::from_rgb(12, 13, 15);
+pub const VU_GREEN: Color32 = Color32::from_rgb(60, 190, 115);
+pub const VU_YELLOW: Color32 = Color32::from_rgb(230, 180, 60);
+pub const VU_RED: Color32 = Color32::from_rgb(235, 75, 75);
+
+pub fn apply_professional_dark_theme(ctx: &egui::Context) {
+    let mut style: Style = (*ctx.style()).clone();
+
+    style.visuals = Visuals::dark();
+
+    style.visuals.window_fill = Color32::from_rgb(18, 18, 20);
+    style.visuals.panel_fill = Color32::from_rgb(18, 18, 20);
+    style.visuals.extreme_bg_color = Color32::from_rgb(12, 12, 14);
+    style.visuals.faint_bg_color = Color32::from_rgb(25, 25, 28);
+
+    style.visuals.widgets.noninteractive.bg_fill = Color32::from_rgb(25, 25, 28);
+    style.visuals.widgets.noninteractive.bg_stroke =
+        Stroke::new(1.0, Color32::from_rgb(52, 52, 58));
+
+    style.visuals.widgets.inactive.bg_fill = Color32::from_rgb(34, 34, 38);
+    style.visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, Color32::from_rgb(58, 58, 64));
+    style.visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, Color32::from_rgb(215, 215, 220));
+
+    style.visuals.widgets.hovered.bg_fill = Color32::from_rgb(45, 45, 52);
+    style.visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, Color32::from_rgb(85, 85, 96));
+
+    style.visuals.widgets.active.bg_fill = Color32::from_rgb(55, 68, 85);
+    style.visuals.widgets.active.bg_stroke = Stroke::new(1.0, Color32::from_rgb(78, 156, 255));
+
+    style.visuals.selection.bg_fill = Color32::from_rgb(45, 95, 155);
+    style.visuals.selection.stroke = Stroke::new(1.0, Color32::from_rgb(120, 190, 255));
+
+    style.visuals.hyperlink_color = Color32::from_rgb(105, 174, 255);
+    style.visuals.warn_fg_color = Color32::from_rgb(230, 180, 64);
+    style.visuals.error_fg_color = Color32::from_rgb(235, 80, 80);
+
+    style.visuals.window_rounding = Rounding::same(6.0);
+    style.visuals.menu_rounding = Rounding::same(6.0);
+
+    style.spacing.item_spacing = egui::vec2(8.0, 6.0);
+    style.spacing.button_padding = egui::vec2(10.0, 5.0);
+    style.spacing.menu_margin = egui::Margin::same(8.0);
+    style.spacing.window_margin = egui::Margin::same(10.0);
+
+    style.text_styles = [
+        (
+            TextStyle::Heading,
+            FontId::new(18.0, FontFamily::Proportional),
+        ),
+        (TextStyle::Body, FontId::new(13.0, FontFamily::Proportional)),
+        (
+            TextStyle::Button,
+            FontId::new(13.0, FontFamily::Proportional),
+        ),
+        (
+            TextStyle::Small,
+            FontId::new(11.0, FontFamily::Proportional),
+        ),
+        (
+            TextStyle::Monospace,
+            FontId::new(12.0, FontFamily::Monospace),
+        ),
+    ]
+    .into();
+
+    ctx.set_style(style);
+}
+
+pub fn section_card(ui: &mut egui::Ui, title: &str, add_contents: impl FnOnce(&mut egui::Ui)) {
+    egui::Frame::none()
+        .fill(BG_PANEL_ALT)
+        .stroke(egui::Stroke::new(1.0, STROKE_SUBTLE))
+        .rounding(egui::Rounding::same(6.0))
+        .inner_margin(egui::Margin::same(10.0))
+        .show(ui, |ui| {
+            ui.label(
+                egui::RichText::new(title)
+                    .size(11.0)
+                    .strong()
+                    .color(TEXT_SECONDARY),
             );
-            visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, text);
+            ui.add_space(6.0);
+            add_contents(ui);
+        });
+}
 
-            visuals.widgets.inactive.bg_fill = panel;
-            visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, text);
+pub fn status_chip(ui: &mut egui::Ui, text: &str, color: egui::Color32) {
+    egui::Frame::none()
+        .fill(color.gamma_multiply(0.18))
+        .stroke(egui::Stroke::new(1.0, color.gamma_multiply(0.7)))
+        .rounding(egui::Rounding::same(10.0))
+        .inner_margin(egui::Margin::symmetric(8.0, 3.0))
+        .show(ui, |ui| {
+            ui.label(egui::RichText::new(text).color(color).strong().size(11.0));
+        });
+}
 
-            visuals.widgets.hovered.bg_fill = accent.gamma_multiply(0.2);
-            visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, accent);
-            visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, accent);
+pub fn file_chip(ui: &mut egui::Ui, label: &str, text: &str, color: egui::Color32) {
+    let chip = format!("{label}: {text}");
 
-            visuals.widgets.active.bg_fill = accent.gamma_multiply(0.4);
-            visuals.widgets.active.fg_stroke = Stroke::new(1.0, Color32::WHITE);
-            visuals.widgets.active.bg_stroke = Stroke::new(1.0, accent);
+    egui::Frame::none()
+        .fill(egui::Color32::from_rgb(32, 32, 36))
+        .stroke(egui::Stroke::new(1.0, color.gamma_multiply(0.6)))
+        .rounding(egui::Rounding::same(4.0))
+        .inner_margin(egui::Margin::symmetric(8.0, 3.0))
+        .show(ui, |ui| {
+            ui.label(
+                egui::RichText::new(chip)
+                    .color(egui::Color32::from_rgb(215, 215, 220))
+                    .size(12.0),
+            );
+        });
+}
 
-            visuals.selection.bg_fill = accent;
-            visuals.selection.stroke = Stroke::new(1.0, Color32::WHITE);
+pub fn toggle_chip(ui: &mut egui::Ui, active: bool, text: &str) -> egui::Response {
+    let fill = if active {
+        ACCENT.gamma_multiply(0.25)
+    } else {
+        BG_RAISED
+    };
 
-            visuals.panel_fill = panel;
-            visuals.window_fill = bg;
-            ctx.set_visuals(visuals);
-        }
-    }
+    let stroke = if active {
+        egui::Stroke::new(1.0, ACCENT)
+    } else {
+        egui::Stroke::new(1.0, STROKE_SUBTLE)
+    };
+
+    ui.add(
+        egui::Button::new(egui::RichText::new(text).size(12.0).color(if active {
+            ACCENT_HOVER
+        } else {
+            TEXT_SECONDARY
+        }))
+        .fill(fill)
+        .stroke(stroke)
+        .rounding(egui::Rounding::same(12.0)),
+    )
+}
+
+pub fn transport_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
+    ui.add_sized(
+        egui::vec2(32.0, 28.0),
+        egui::Button::new(egui::RichText::new(label).size(15.0).color(TEXT_PRIMARY)),
+    )
 }

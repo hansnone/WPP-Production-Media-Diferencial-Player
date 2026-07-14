@@ -16,31 +16,6 @@ use parking_lot::Mutex;
 pub const PROXY_VIDEO_FILENAME: &str = "proxy.mkv";
 const EXR_LIST_FILENAME: &str = "exr_list.txt";
 
-use crate::error::AppError;
-
-pub fn validate_ffmpeg_binary() -> Result<PathBuf, AppError> {
-    let output = Command::new("ffmpeg")
-        .arg("-version")
-        .output()
-        .map_err(|e| {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                AppError::FfmpegNotFound
-            } else {
-                AppError::Io(e)
-            }
-        })?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-        return Err(AppError::FfmpegCommandFailed {
-            status: output.status.code(),
-            stderr,
-        });
-    }
-
-    Ok(PathBuf::from("ffmpeg"))
-}
-
 /// Ordena rutas EXR por nombre de fichero (mismo criterio que `ls` lexicográfico en el nombre).
 fn sort_exr_paths_by_file_name(paths: &mut [PathBuf]) {
     paths.sort_by(|a, b| a.file_name().cmp(&b.file_name()));

@@ -6,8 +6,11 @@
 
 use anyhow::{anyhow, Context, Result};
 use crossbeam_channel::{Receiver, Sender};
+use ebur128::{EbuR128, Mode};
+use parking_lot::Mutex;
 use std::ffi::{CStr, CString};
 use std::ptr;
+use std::sync::Arc;
 
 use ffmpeg_sys_next as ffi;
 
@@ -27,6 +30,7 @@ pub fn spawn_decoder(
     Receiver<VideoFrame>,
     Receiver<AudioFrame>,
     ColorMetadata,
+    Arc<Mutex<crate::types::LoudnessResult>>,
 )> {
     // Initialise FFmpeg (safe to call multiple times)
     unsafe {
@@ -41,6 +45,61 @@ pub fn spawn_decoder(
     let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded::<DecoderCommand>();
     let (frame_tx, frame_rx) = crossbeam_channel::bounded::<VideoFrame>(8);
     let (audio_tx, audio_rx) = crossbeam_channel::bounded::<AudioFrame>(256);
+    let (ebu_tx, ebu_rx) = crossbeam_channel::unbounded::<AudioFrame>();
+
+    let loudness_arc = Arc::new(Mutex::new(crate::types::LoudnessResult::default()));
+    let ebu_loudness_arc = Arc::clone(&loudness_arc);
+
+    std::thread::Builder::new()
+        .name(format!("ebu:{}", &path_owned))
+        .spawn(move || {
+            let mut ebu: Option<EbuR128> = None;
+            let mut ebu_channels = 0;
+            let mut ebu_rate = 0;
+
+            while let Ok(frame) = ebu_rx.recv() {
+                let channels = frame.channels as u32;
+                let sample_rate = frame.sample_rate as u32;
+                let ebu_target_channels = if channels == 1 { 2 } else { channels };
+
+                if ebu.is_none() || ebu_channels != ebu_target_channels || ebu_rate != sample_rate {
+                    if let Ok(new_ebu) = EbuR128::new(
+                        ebu_target_channels,
+                        sample_rate,
+                        Mode::I | Mode::M | Mode::S | Mode::TRUE_PEAK,
+                    ) {
+                        ebu = Some(new_ebu);
+                        ebu_channels = ebu_target_channels;
+                        ebu_rate = sample_rate;
+                    }
+                }
+
+                if let Some(ebu) = ebu.as_mut() {
+                    if channels == 1 {
+                        let mut stereo = Vec::with_capacity(frame.samples.len() * 2);
+                        for &s in &frame.samples {
+                            stereo.push(s);
+                            stereo.push(s);
+                        }
+                        let _ = ebu.add_frames_f32(&stereo);
+                    } else {
+                        let _ = ebu.add_frames_f32(&frame.samples);
+                    }
+
+                    if let Ok(m) = ebu.loudness_momentary() {
+                        let mut l = ebu_loudness_arc.lock();
+                        l.momentary = m;
+                        l.short_term = ebu.loudness_shortterm().unwrap_or(-120.0);
+                        l.integrated = ebu.loudness_global().unwrap_or(-120.0);
+                        l.true_peak[0] = l.true_peak[0].max(ebu.prev_true_peak(0).unwrap_or(0.0));
+                        if ebu_channels > 1 {
+                            l.true_peak[1] =
+                                l.true_peak[1].max(ebu.prev_true_peak(1).unwrap_or(0.0));
+                        }
+                    }
+                }
+            }
+        })?;
 
     std::thread::Builder::new()
         .name(format!("decoder:{}", &path_owned))
@@ -52,12 +111,13 @@ pub fn spawn_decoder(
                 cmd_rx,
                 frame_tx,
                 audio_tx,
+                ebu_tx,
             ) {
                 log::error!("Decoder thread error: {e:#}");
             }
         })?;
 
-    Ok((cmd_tx, frame_rx, audio_rx, meta))
+    Ok((cmd_tx, frame_rx, audio_rx, meta, loudness_arc))
 }
 
 // ---------------------------------------------------------------------------
@@ -294,6 +354,7 @@ struct DecoderCtx {
     target_channels: i32,
     audio_scratch: *mut u8,
     audio_scratch_cap: i32,
+    ebu_tx: Sender<AudioFrame>,
 }
 
 impl Drop for DecoderCtx {
@@ -324,7 +385,12 @@ impl Drop for DecoderCtx {
     }
 }
 
-fn open_decoder(path: &str, target_sample_rate: i32, target_channels: i32) -> Result<DecoderCtx> {
+fn open_decoder(
+    path: &str,
+    target_sample_rate: i32,
+    target_channels: i32,
+    ebu_tx: Sender<AudioFrame>,
+) -> Result<DecoderCtx> {
     let c_path = CString::new(path)?;
     unsafe {
         let mut fmt_ctx: *mut ffi::AVFormatContext = ptr::null_mut();
@@ -494,6 +560,7 @@ fn open_decoder(path: &str, target_sample_rate: i32, target_channels: i32) -> Re
             target_channels,
             audio_scratch: ptr::null_mut(),
             audio_scratch_cap: 0,
+            ebu_tx,
         })
     }
 }
@@ -505,8 +572,9 @@ fn decoder_loop(
     cmd_rx: Receiver<DecoderCommand>,
     frame_tx: Sender<VideoFrame>,
     audio_tx: Sender<AudioFrame>,
+    ebu_tx: Sender<AudioFrame>,
 ) -> Result<()> {
-    let mut ctx = open_decoder(path, target_sample_rate, target_channels)?;
+    let mut ctx = open_decoder(path, target_sample_rate, target_channels, ebu_tx)?;
     log::info!(
         "Decoder open: '{path}' {}×{} @ {:.2}fps",
         ctx.width,
@@ -760,7 +828,10 @@ unsafe fn decode_one_frame(
         let ret = ffi::av_read_frame(ctx.fmt_ctx, packet);
         if ret < 0 {
             // EOF — flush decoder
-            ffi::avcodec_send_packet(ctx.codec_ctx, ptr::null());
+            let ret_send = ffi::avcodec_send_packet(ctx.codec_ctx, ptr::null());
+            if ret_send < 0 {
+                log::warn!("avcodec_send_packet (flush video) error code: {}", ret_send);
+            }
             let r2 = ffi::avcodec_receive_frame(ctx.codec_ctx, frame);
             if r2 == 0 {
                 let pts = (*frame).best_effort_timestamp;
@@ -772,7 +843,10 @@ unsafe fn decode_one_frame(
         }
 
         if (*packet).stream_index == ctx.stream_idx {
-            ffi::avcodec_send_packet(ctx.codec_ctx, packet);
+            let ret_send = ffi::avcodec_send_packet(ctx.codec_ctx, packet);
+            if ret_send < 0 {
+                log::warn!("avcodec_send_packet (video) error code: {}", ret_send);
+            }
             ffi::av_packet_unref(packet);
 
             let r2 = ffi::avcodec_receive_frame(ctx.codec_ctx, frame);
@@ -783,13 +857,17 @@ unsafe fn decode_one_frame(
                 return Ok(Some(vf));
             }
         } else if (*packet).stream_index == ctx.audio_stream_idx {
-            ffi::avcodec_send_packet(ctx.audio_codec_ctx, packet);
+            let ret_send = ffi::avcodec_send_packet(ctx.audio_codec_ctx, packet);
+            if ret_send < 0 {
+                log::warn!("avcodec_send_packet (audio) error code: {}", ret_send);
+            }
             ffi::av_packet_unref(packet);
 
             while ffi::avcodec_receive_frame(ctx.audio_codec_ctx, frame) == 0 {
                 if let Some(audio) = convert_audio_frame(ctx, frame)? {
                     // Send blocking (with bounds) so we don't drop audio packets and cause glitches
-                    let _ = audio_tx.send(audio);
+                    let _ = audio_tx.send(audio.clone());
+                    let _ = ctx.ebu_tx.send(audio);
                 }
                 ffi::av_frame_unref(frame);
             }
@@ -806,12 +884,15 @@ unsafe fn seek_exact(
     audio_tx: &Sender<AudioFrame>,
 ) -> Result<()> {
     // Seek to slightly before target to get the keyframe
-    ffi::av_seek_frame(
+    let ret_seek = ffi::av_seek_frame(
         ctx.fmt_ctx,
         ctx.stream_idx,
         target_pts,
         ffi::AVSEEK_FLAG_BACKWARD as i32,
     );
+    if ret_seek < 0 {
+        log::warn!("av_seek_frame error code: {}", ret_seek);
+    }
     ffi::avcodec_flush_buffers(ctx.codec_ctx);
 
     let packet = ffi::av_packet_alloc();
@@ -824,7 +905,10 @@ unsafe fn seek_exact(
         }
 
         if (*packet).stream_index == ctx.stream_idx {
-            ffi::avcodec_send_packet(ctx.codec_ctx, packet);
+            let ret_send = ffi::avcodec_send_packet(ctx.codec_ctx, packet);
+            if ret_send < 0 {
+                log::warn!("avcodec_send_packet (video seek) error code: {}", ret_send);
+            }
             ffi::av_packet_unref(packet);
 
             let r2 = ffi::avcodec_receive_frame(ctx.codec_ctx, frame);
@@ -839,14 +923,18 @@ unsafe fn seek_exact(
                 ffi::av_frame_unref(frame);
             }
         } else if (*packet).stream_index == ctx.audio_stream_idx {
-            ffi::avcodec_send_packet(ctx.audio_codec_ctx, packet);
+            let ret_send = ffi::avcodec_send_packet(ctx.audio_codec_ctx, packet);
+            if ret_send < 0 {
+                log::warn!("avcodec_send_packet (audio seek) error code: {}", ret_send);
+            }
             ffi::av_packet_unref(packet);
 
             while ffi::avcodec_receive_frame(ctx.audio_codec_ctx, frame) == 0 {
                 let pts = (*frame).best_effort_timestamp;
                 if pts >= target_pts {
                     if let Some(audio) = convert_audio_frame(ctx, frame)? {
-                        let _ = audio_tx.send(audio);
+                        let _ = audio_tx.send(audio.clone());
+                        let _ = ctx.ebu_tx.send(audio);
                     }
                 }
                 ffi::av_frame_unref(frame);
@@ -894,12 +982,19 @@ unsafe fn convert_frame(
 
     let stride = (*dst_frame).linesize[0] as usize;
     let pixel_bytes = 4;
-    let mut rgba_data = Vec::with_capacity((w * h) as usize * pixel_bytes);
+    let total_bytes = (w * h) as usize * pixel_bytes;
+    let mut rgba_data = Vec::with_capacity(total_bytes);
     let src_ptr = (*dst_frame).data[0];
-    for row in 0..h as usize {
-        let row_start = src_ptr.add(row * stride);
-        let row_slice = std::slice::from_raw_parts(row_start, w as usize * pixel_bytes);
-        rgba_data.extend_from_slice(row_slice);
+
+    if stride == w as usize * pixel_bytes {
+        let all_slice = std::slice::from_raw_parts(src_ptr, total_bytes);
+        rgba_data.extend_from_slice(all_slice);
+    } else {
+        for row in 0..h as usize {
+            let row_start = src_ptr.add(row * stride);
+            let row_slice = std::slice::from_raw_parts(row_start, w as usize * pixel_bytes);
+            rgba_data.extend_from_slice(row_slice);
+        }
     }
 
     Ok(VideoFrame {

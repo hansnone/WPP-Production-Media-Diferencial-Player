@@ -5,8 +5,7 @@ use egui::{Color32, RichText, Ui};
 use crate::app::DiffPlayerApp;
 use crate::types::{Channel, CompareMode, DiffMode, Language, SafeZoneMode};
 use crate::ui::design::{tr, ACCENT_PRIMARY, FONT_LABEL};
-use crate::ui::i18n::{diff_mode_label, THEME_MENU_CHOICES};
-use crate::ui::theme::apply_theme;
+use crate::ui::i18n::diff_mode_label;
 
 /// Title for the OBS clean-feed secondary viewport.
 pub fn clean_feed_window_title(lang: Language) -> String {
@@ -135,19 +134,6 @@ pub fn show_menu_bar(ui: &mut Ui, app: &mut DiffPlayerApp) {
                 .clicked()
             {
                 app.save_session();
-                ui.close_menu();
-            }
-
-            if ui
-                .button(tr(
-                    lang,
-                    "Exportar marcadores a CSV…",
-                    "Export markers to CSV…",
-                    "Export markers to CSV…",
-                ))
-                .clicked()
-            {
-                app.export_csv();
                 ui.close_menu();
             }
 
@@ -469,6 +455,38 @@ pub fn show_menu_bar(ui: &mut Ui, app: &mut DiffPlayerApp) {
 
             ui.separator();
             ui.menu_button(
+                tr(
+                    lang,
+                    "Miniaturas Timeline",
+                    "Timeline Thumbnails",
+                    "Timeline Thumbnails",
+                ),
+                |ui| {
+                    if ui
+                        .radio_value(
+                            &mut app.view_mut().timeline_thumbs_channel,
+                            crate::types::Channel::A,
+                            "Video A",
+                        )
+                        .clicked()
+                    {
+                        ui.close_menu();
+                    }
+                    if ui
+                        .radio_value(
+                            &mut app.view_mut().timeline_thumbs_channel,
+                            crate::types::Channel::B,
+                            "Video B",
+                        )
+                        .clicked()
+                    {
+                        ui.close_menu();
+                    }
+                },
+            );
+
+            ui.separator();
+            ui.menu_button(
                 tr(lang, "Idioma / Language", "Language / Idioma", "Lambë"),
                 |ui| {
                     if ui
@@ -495,23 +513,6 @@ pub fn show_menu_bar(ui: &mut Ui, app: &mut DiffPlayerApp) {
                     }
                 },
             );
-            ui.menu_button(tr(lang, "Tema / Theme", "Theme / Tema", "Cala"), |ui| {
-                let mut current_theme = app.view().theme;
-                egui::ScrollArea::vertical()
-                    .max_height(400.0)
-                    .show(ui, |ui| {
-                        for &(theme_val, name) in THEME_MENU_CHOICES {
-                            if ui
-                                .radio_value(&mut current_theme, theme_val, name)
-                                .clicked()
-                            {
-                                app.view_mut().theme = theme_val;
-                                apply_theme(ui.ctx(), theme_val);
-                                ui.close_menu();
-                            }
-                        }
-                    });
-            });
         });
 
         ui.menu_button(tr(lang, "Emisión", "Broadcast", "Sirë"), |ui| {

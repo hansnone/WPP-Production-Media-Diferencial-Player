@@ -120,41 +120,6 @@ impl Default for Language {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Theme {
-    Dark,
-    Light,
-    Rust,
-    SolarizedDark,
-    SolarizedLight,
-    Dracula,
-    Gruvbox,
-    Nord,
-    Monokai,
-    OneDark,
-    OneLight,
-    Catppuccin,
-    TokyoNight,
-    NightOwl,
-    Ayc,
-    MaterialDesign,
-    Everforest,
-    TomorrowNight,
-    RosePine,
-    SynthWave84,
-    Nordic,
-    OceanicNext,
-    Palenight,
-    Powerlevel10k,
-    Snazzy,
-}
-
-impl Default for Theme {
-    fn default() -> Self {
-        Self::Dark
-    }
-}
-
 /// Estado de reproducción compartido entre la UI y la coordinación con los decoders.
 ///
 /// Reloj maestro: al reproducir, `current_pts = playback_start_pts + elapsed` desde `playback_start_instant`.
@@ -171,10 +136,6 @@ pub struct PlaybackState {
     pub playback_start_instant: Option<std::time::Instant>,
     /// PTS at the moment we started (or seeked during) playback.
     pub playback_start_pts: f64,
-    /// Audio sample rate preferred by the host output device.
-    pub target_sample_rate: u32,
-    /// Audio channel count preferred by the host output device.
-    pub target_channels: u16,
 }
 
 impl Default for PlaybackState {
@@ -189,8 +150,6 @@ impl Default for PlaybackState {
             loop_range_active: false,
             playback_start_instant: None,
             playback_start_pts: 0.0,
-            target_sample_rate: 44100,
-            target_channels: 2,
         }
     }
 }
@@ -202,17 +161,8 @@ pub enum Channel {
     B,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct Marker {
-    pub pts: f64,
-    pub note: String,
-    pub color: [f32; 3],
-    pub channel_hint: Option<Channel>,
-}
-
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct SessionState {
-    pub markers: Vec<Marker>,
     pub video_a_path: Option<String>,
     pub video_b_path: Option<String>,
 }
@@ -228,5 +178,25 @@ mod tests {
         assert_eq!(CompareMode::AbsDiff as u32, 1);
         assert_eq!(CompareMode::Heatmap as u32, 2);
         assert_eq!(CompareMode::SideBySide as u32, 3);
+    }
+}
+
+/// Métricas de loudness EBU R128 calculadas en el hilo del decoder (no en la UI).
+#[derive(Debug, Clone, Copy)]
+pub struct LoudnessResult {
+    pub momentary: f64,
+    pub short_term: f64,
+    pub integrated: f64,
+    pub true_peak: [f64; 2],
+}
+
+impl Default for LoudnessResult {
+    fn default() -> Self {
+        Self {
+            momentary: -120.0,
+            short_term: -120.0,
+            integrated: -120.0,
+            true_peak: [0.0; 2],
+        }
     }
 }

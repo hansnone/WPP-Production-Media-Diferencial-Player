@@ -186,7 +186,7 @@ fn draw_ebu_panel(
     ui: &mut egui::Ui,
     ch_idx: usize,
     ch_label: &str,
-    loudness: &crate::app::LoudnessResult,
+    loudness: &crate::types::LoudnessResult,
     tp_l: TpState,
     tp_r: TpState,
 ) {

@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Design tokens shared across native UI panels.
 
 use egui::Color32;
@@ -28,8 +29,6 @@ pub const FONT_MONO_SMALL: f32 = 10.0;
 
 /// Primary accent (timeline playhead, highlights) — keep aligned with info panel branding.
 pub const ACCENT_PRIMARY: Color32 = Color32::from_rgb(80, 160, 230);
-
-pub const TIMELINE_HEIGHT: f32 = 44.0;
 
 pub fn dialog_ok(lang: Language) -> &'static str {
     tr(lang, "Aceptar", "OK", "Ná")

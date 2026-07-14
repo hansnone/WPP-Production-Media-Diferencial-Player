@@ -5,13 +5,11 @@
 
 mod app;
 mod decoder;
-mod error;
-pub use error::AppError;
 pub mod metrics;
 mod proxy;
 mod renderer;
-mod trace_log;
 pub mod thumbnail;
+mod trace_log;
 mod types;
 mod ui;
 

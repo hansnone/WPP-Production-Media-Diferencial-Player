@@ -7,11 +7,14 @@
 use crate::types::VideoFrame;
 use std::time::Duration;
 
+#[allow(dead_code)]
 /// Máximo tiempo entre repintados cuando hay sink de audio (ms).
 pub const REPINT_AUDIO_MAX_MS: u64 = 8;
+#[allow(dead_code)]
 /// Máximo cuando no hay audio activo en ese camino (ms).
 pub const REPINT_IDLE_MAX_MS: u64 = 100;
 
+#[allow(dead_code)]
 /// Calcula el retardo hasta el siguiente repintado alineado al siguiente frame de vídeo.
 #[must_use]
 pub fn next_frame_repaint_delay(fps: f64, current_pts: f64, max_delay_ms: u64) -> Duration {

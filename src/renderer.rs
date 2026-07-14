@@ -134,13 +134,13 @@ impl VideoTexture {
 // ---------------------------------------------------------------------------
 
 pub struct VideoRenderer {
-    pub pipeline: wgpu::RenderPipeline,
+    pub pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     pub bind_group_layout: wgpu::BindGroupLayout,
     pub uniform_buffer: wgpu::Buffer,
     pub sampler: wgpu::Sampler,
     pub tex_a: VideoTexture,
     pub tex_b: VideoTexture,
-    pub bind_group: wgpu::BindGroup,
+    pub bind_group: std::sync::Arc<wgpu::BindGroup>,
     pub uniforms: ShaderUniforms,
 }
 
@@ -265,13 +265,13 @@ impl VideoRenderer {
         });
 
         Self {
-            pipeline,
+            pipeline: std::sync::Arc::new(pipeline),
             bind_group_layout,
             uniform_buffer,
             sampler,
             tex_a,
             tex_b,
-            bind_group,
+            bind_group: std::sync::Arc::new(bind_group),
             uniforms,
         }
     }
@@ -288,14 +288,14 @@ impl VideoRenderer {
         let size_changed = self.tex_a.width != width || self.tex_a.height != height;
         self.tex_a.update(device, queue, rgba, width, height);
         if size_changed {
-            self.bind_group = make_bind_group(
+            self.bind_group = std::sync::Arc::new(make_bind_group(
                 device,
                 &self.bind_group_layout,
                 &self.tex_a,
                 &self.tex_b,
                 &self.sampler,
                 &self.uniform_buffer,
-            );
+            ));
         }
     }
 
@@ -311,14 +311,14 @@ impl VideoRenderer {
         let size_changed = self.tex_b.width != width || self.tex_b.height != height;
         self.tex_b.update(device, queue, rgba, width, height);
         if size_changed {
-            self.bind_group = make_bind_group(
+            self.bind_group = std::sync::Arc::new(make_bind_group(
                 device,
                 &self.bind_group_layout,
                 &self.tex_a,
                 &self.tex_b,
                 &self.sampler,
                 &self.uniform_buffer,
-            );
+            ));
         }
     }
 
@@ -326,6 +326,11 @@ impl VideoRenderer {
     pub fn upload_uniforms(&self, queue: &wgpu::Queue) {
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&self.uniforms));
     }
+}
+
+struct PipelineAndBindGroup {
+    pipeline: std::sync::Arc<wgpu::RenderPipeline>,
+    bind_group: std::sync::Arc<wgpu::BindGroup>,
 }
 
 // egui_wgpu Callback trait integration
@@ -340,10 +345,14 @@ impl egui_wgpu::CallbackTrait for RenderCallback {
         queue: &wgpu::Queue,
         _screen_descriptor: &egui_wgpu::ScreenDescriptor,
         _egui_encoder: &mut wgpu::CommandEncoder,
-        _callback_resources: &mut egui_wgpu::CallbackResources,
+        callback_resources: &mut egui_wgpu::CallbackResources,
     ) -> Vec<wgpu::CommandBuffer> {
         let rend = self.renderer.lock();
         rend.upload_uniforms(queue);
+        callback_resources.insert(PipelineAndBindGroup {
+            pipeline: rend.pipeline.clone(),
+            bind_group: rend.bind_group.clone(),
+        });
         Vec::new()
     }
 
@@ -351,21 +360,12 @@ impl egui_wgpu::CallbackTrait for RenderCallback {
         &'a self,
         _info: egui::PaintCallbackInfo,
         render_pass: &mut wgpu::RenderPass<'a>,
-        _callback_resources: &'a egui_wgpu::CallbackResources,
+        callback_resources: &'a egui_wgpu::CallbackResources,
     ) {
-        let rend = self.renderer.lock();
-
-        // SAFETY: We are recording commands into the RenderPass which will be submitted immediately.
-        // The VideoRenderer (and its pipeline/bind_group) is kept alive by the Arc in RenderCallback.
-        unsafe {
-            // Helper to bypass restrictive lifetime bounds on RenderPass.
-            unsafe fn extend<'a, T>(t: &T) -> &'a T {
-                std::mem::transmute(t)
-            }
-            let rp: &mut wgpu::RenderPass<'a> = std::mem::transmute(render_pass);
-            rp.set_pipeline(extend(&rend.pipeline));
-            rp.set_bind_group(0, extend(&rend.bind_group), &[]);
-            rp.draw(0..3, 0..1);
+        if let Some(res) = callback_resources.get::<PipelineAndBindGroup>() {
+            render_pass.set_pipeline(&res.pipeline);
+            render_pass.set_bind_group(0, &res.bind_group, &[]);
+            render_pass.draw(0..3, 0..1);
         }
     }
 }
